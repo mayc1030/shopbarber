@@ -138,6 +138,31 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Sub-pestañas de Admin (Solo Super Admin) ---
   const tabBtns = document.querySelectorAll(".admin-tab-btn");
   const subPanes = document.querySelectorAll(".admin-subpane");
+  const adminTabsWrapper = document.getElementById("admin-tabs-wrapper");
+  const btnTabsPrev = document.getElementById("btn-tabs-prev");
+  const btnTabsNext = document.getElementById("btn-tabs-next");
+
+  function updateAdminTabsScrollHints() {
+    if (!adminTabsWrapper || !adminTabContainer) return;
+    const maxScroll = adminTabContainer.scrollWidth - adminTabContainer.clientWidth;
+    adminTabsWrapper.classList.toggle("has-left", adminTabContainer.scrollLeft > 4);
+    adminTabsWrapper.classList.toggle("has-right", maxScroll > 4 && adminTabContainer.scrollLeft < maxScroll - 4);
+  }
+
+  if (adminTabContainer) {
+    adminTabContainer.addEventListener("scroll", updateAdminTabsScrollHints, { passive: true });
+    window.addEventListener("resize", updateAdminTabsScrollHints);
+  }
+  if (btnTabsPrev && adminTabContainer) {
+    btnTabsPrev.addEventListener("click", () => {
+      adminTabContainer.scrollBy({ left: -140, behavior: "smooth" });
+    });
+  }
+  if (btnTabsNext && adminTabContainer) {
+    btnTabsNext.addEventListener("click", () => {
+      adminTabContainer.scrollBy({ left: 140, behavior: "smooth" });
+    });
+  }
 
   tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -146,6 +171,7 @@ document.addEventListener("DOMContentLoaded", () => {
       subPanes.forEach((p) => p.classList.remove("active"));
 
       btn.classList.add("active");
+      btn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
       const targetId = btn.dataset.tab;
       document.getElementById(targetId).classList.add("active");
 
@@ -283,7 +309,9 @@ document.addEventListener("DOMContentLoaded", () => {
         userRoleTag.className = "appointment-status-tag status-scheduled";
 
         panelSuperAdmin.style.display = "block";
+        if (adminTabsWrapper) adminTabsWrapper.style.display = "block";
         adminTabContainer.style.display = "flex";
+        requestAnimationFrame(updateAdminTabsScrollHints);
         adminOnlyTabIds.forEach((id) => {
           const el = document.getElementById(id);
           if (el) el.style.display = "";
@@ -306,6 +334,7 @@ document.addEventListener("DOMContentLoaded", () => {
         userRoleTag.className = "appointment-status-tag status-completed";
 
         panelSuperAdmin.style.display = "none";
+        if (adminTabsWrapper) adminTabsWrapper.style.display = "none";
         adminTabContainer.style.display = "none";
 
         // Bloqueo estricto de todos los subpaneles exclusivos de Super Admin

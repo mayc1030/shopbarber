@@ -51,13 +51,21 @@ title: Portal Barbería
     </div>
 
     <!-- Barra de pestañas (solo visible para Super Admin) -->
-    <div class="admin-tab-bar" id="admin-tab-container" style="display:none;">
-      <button class="admin-tab-btn active" data-tab="tab-appointments">Citas del Día</button>
-      <button class="admin-tab-btn" data-tab="tab-services">Servicios</button>
-      <button class="admin-tab-btn" data-tab="tab-barbers">Barberos</button>
-      <button class="admin-tab-btn" data-tab="tab-gallery">Galería</button>
-      <button class="admin-tab-btn" data-tab="tab-homeconfig">Inicio</button>
-      <button class="admin-tab-btn" data-tab="tab-reports">Reportes</button>
+    <div class="admin-tabs-scroll-wrap" id="admin-tabs-wrapper" style="display:none;">
+      <button type="button" class="admin-tabs-arrow left" id="btn-tabs-prev" aria-label="Ver pestañas anteriores">
+        <i data-lucide="chevron-left" style="width:16px; height:16px;"></i>
+      </button>
+      <div class="admin-tab-bar" id="admin-tab-container">
+        <button class="admin-tab-btn active" data-tab="tab-appointments">Citas del Día</button>
+        <button class="admin-tab-btn" data-tab="tab-services">Servicios</button>
+        <button class="admin-tab-btn" data-tab="tab-barbers">Barberos</button>
+        <button class="admin-tab-btn" data-tab="tab-gallery">Galería</button>
+        <button class="admin-tab-btn" data-tab="tab-homeconfig">Inicio</button>
+        <button class="admin-tab-btn" data-tab="tab-reports">Reportes</button>
+      </div>
+      <button type="button" class="admin-tabs-arrow right" id="btn-tabs-next" aria-label="Ver más pestañas">
+        <i data-lucide="chevron-right" style="width:16px; height:16px;"></i>
+      </button>
     </div>
   </div>
 
@@ -465,4 +473,4 @@ title: Portal Barbería
 
 <!-- Inyección de Lógica -->
 <script src="{{ '/assets/js/supabase-client.js' | relative_url }}"></script>
-<script src="{{ '/assets/js/admin.js' | relative_url }}?v=9"></script>
+<script src="{{ '/assets/js/admin.js' | relative_url }}?v=10"></script>

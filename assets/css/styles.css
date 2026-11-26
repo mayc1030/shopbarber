@@ -948,3 +948,70 @@ h1, h2, h3, h4 {
   padding: 8px 14px;
   font-size: 0.85rem;
 }
+
+/* --- Indicadores visuales de scroll horizontal para Admin Tabs --- */
+.admin-tabs-scroll-wrap {
+  position: relative;
+  overflow: hidden;
+}
+
+.admin-tabs-scroll-wrap::before,
+.admin-tabs-scroll-wrap::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 2;
+}
+
+.admin-tabs-scroll-wrap::before {
+  left: 0;
+  background: linear-gradient(90deg, rgba(10, 10, 11, 0.96) 35%, rgba(10, 10, 11, 0) 100%);
+}
+
+.admin-tabs-scroll-wrap::after {
+  right: 0;
+  background: linear-gradient(270deg, rgba(10, 10, 11, 0.96) 35%, rgba(10, 10, 11, 0) 100%);
+}
+
+.admin-tabs-scroll-wrap.has-left::before,
+.admin-tabs-scroll-wrap.has-right::after {
+  opacity: 1;
+}
+
+.admin-tabs-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.admin-tabs-arrow.left { left: 0; }
+.admin-tabs-arrow.right { right: 0; }
+
+.admin-tabs-scroll-wrap.has-left .admin-tabs-arrow.left,
+.admin-tabs-scroll-wrap.has-right .admin-tabs-arrow.right {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.admin-sticky-top .admin-tab-bar {
+  scroll-behavior: smooth;
+  padding-right: 20px;
+}
