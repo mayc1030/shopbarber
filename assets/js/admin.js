@@ -167,6 +167,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const tabBtns = document.querySelectorAll(".admin-tab-btn");
   const subPanes = document.querySelectorAll(".admin-subpane");
   const adminTabsWrapper = document.getElementById("admin-tabs-wrapper");
+  const adminSubtabsWrapper = document.getElementById("admin-subtabs-wrapper");
   const updateAdminTabsScrollHints = setupScrollableTabBar(
     "admin-tabs-wrapper",
     "admin-tab-container",
@@ -193,6 +194,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const appContent = document.querySelector(".app-content");
       if (appContent) appContent.scrollTo({ top: 0, behavior: "smooth" });
+
+      if (adminSubtabsWrapper) {
+        adminSubtabsWrapper.style.display = targetId === "tab-appointments" ? "block" : "none";
+      }
 
       if (targetId === "tab-appointments") {
         loadAppointments();
@@ -227,6 +232,8 @@ document.addEventListener("DOMContentLoaded", () => {
       activeBtn.classList.add("active");
       activePane.style.display = "block";
       activeBtn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      const appContent = document.querySelector(".app-content");
+      if (appContent) appContent.scrollTo({ top: 0, behavior: "smooth" });
     };
 
     btnSubtabProfile.addEventListener("click", (e) => {
@@ -320,6 +327,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         panelSuperAdmin.style.display = "block";
         if (adminTabsWrapper) adminTabsWrapper.style.display = "block";
+        if (adminSubtabsWrapper) adminSubtabsWrapper.style.display = "block";
         adminTabContainer.style.display = "flex";
         requestAnimationFrame(() => {
           updateAdminTabsScrollHints();
@@ -348,6 +356,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         panelSuperAdmin.style.display = "none";
         if (adminTabsWrapper) adminTabsWrapper.style.display = "none";
+        if (adminSubtabsWrapper) adminSubtabsWrapper.style.display = "block";
         adminTabContainer.style.display = "none";
 
         // Bloqueo estricto de todos los subpaneles exclusivos de Super Admin
