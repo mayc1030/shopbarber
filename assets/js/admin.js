@@ -169,90 +169,151 @@ document.addEventListener("DOMContentLoaded", () => {
   const adminTabsWrapper = document.getElementById("admin-tabs-wrapper");
   const adminSubtabsWrapper = document.getElementById("admin-subtabs-wrapper");
   const btnAdminMenu = document.getElementById("btn-admin-menu");
-  const adminMenuDropdown = document.getElementById("admin-menu-dropdown");
+  const adminMenuOverlay = document.getElementById("admin-menu-overlay");
+  const adminMenuList = document.getElementById("admin-menu-list");
+  const adminMenuUser = document.getElementById("admin-menu-user");
+  const btnAdminMenuClose = document.getElementById("btn-admin-menu-close");
+  const btnMenuLogout = document.getElementById("btn-menu-logout");
 
   function closeAdminMenu() {
-    if (!adminMenuDropdown || !btnAdminMenu) return;
-    adminMenuDropdown.style.display = "none";
+    if (!adminMenuOverlay || !btnAdminMenu) return;
+    adminMenuOverlay.classList.remove("open");
+    adminMenuOverlay.setAttribute("aria-hidden", "true");
     btnAdminMenu.setAttribute("aria-expanded", "false");
     btnAdminMenu.classList.remove("active");
   }
 
   function renderAdminMenu() {
-    if (!adminMenuDropdown) return;
+    if (!adminMenuList) return;
     const isAdmin = Boolean(userProfile && userProfile.is_admin);
-    const items = isAdmin
+    if (adminMenuUser) {
+      adminMenuUser.textContent = userGreeting ? userGreeting.textContent : "Menú";
+    }
+
+    const groups = isAdmin
       ? [
-          { label: "Citas del Día", icon: "calendar", targetId: null, tab: "tab-appointments" },
-          { label: "Servicios", icon: "scissors", targetId: null, tab: "tab-services" },
-          { label: "Barberos", icon: "users", targetId: null, tab: "tab-barbers" },
-          { label: "Galería", icon: "image", targetId: null, tab: "tab-gallery" },
-          { label: "Inicio y Horarios", icon: "home", targetId: null, tab: "tab-homeconfig" },
-          { label: "Reportes", icon: "bar-chart-2", targetId: null, tab: "tab-reports" }
+          {
+            title: "Citas",
+            items: [
+              { label: "Citas del Día", icon: "calendar", tab: "tab-appointments" },
+              { label: "Solicitudes por Confirmar", icon: "clock", tab: "tab-appointments", subBtnId: "btn-subtab-pending", isSub: true },
+              { label: "Agenda / Citas Agendadas", icon: "calendar-check", tab: "tab-appointments", subBtnId: "btn-subtab-agenda", isSub: true }
+            ]
+          },
+          {
+            title: "Gestión",
+            items: [
+              { label: "Servicios", icon: "scissors", tab: "tab-services" },
+              { label: "Barberos", icon: "users", tab: "tab-barbers" },
+              { label: "Galería", icon: "image", tab: "tab-gallery" },
+              { label: "Inicio y Horarios", icon: "home", tab: "tab-homeconfig" },
+              { label: "Reportes", icon: "bar-chart-2", tab: "tab-reports" }
+            ]
+          }
         ]
       : barberProfile
         ? [
-            { label: "Mi Perfil", icon: "user", btnId: "btn-subtab-profile" },
-            { label: "Solicitudes por Confirmar", icon: "clock", btnId: "btn-subtab-pending" },
-            { label: "Agenda / Citas Agendadas", icon: "calendar-check", btnId: "btn-subtab-agenda" }
+            {
+              title: "Mi Panel",
+              items: [
+                { label: "Mi Perfil", icon: "user", subBtnId: "btn-subtab-profile" },
+                { label: "Solicitudes por Confirmar", icon: "clock", subBtnId: "btn-subtab-pending" },
+                { label: "Agenda / Citas Agendadas", icon: "calendar-check", subBtnId: "btn-subtab-agenda" }
+              ]
+            }
           ]
         : [];
 
-    adminMenuDropdown.innerHTML = "";
-    items.forEach((item) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "admin-menu-item";
+    adminMenuList.innerHTML = "";
+    let itemIdx = 0;
 
-      let isActive = false;
-      if (item.tab) {
-        const tabBtn = document.querySelector(`.admin-tab-btn[data-tab="${item.tab}"]`);
-        isActive = Boolean(tabBtn && tabBtn.classList.contains("active"));
-      } else if (item.btnId) {
-        const subBtn = document.getElementById(item.btnId);
-        isActive = Boolean(subBtn && subBtn.classList.contains("active"));
-      }
-      if (isActive) btn.classList.add("active");
+    groups.forEach((group) => {
+      const groupTitle = document.createElement("div");
+      groupTitle.className = "admin-menu-group-label";
+      groupTitle.textContent = group.title;
+      adminMenuList.appendChild(groupTitle);
 
-      btn.innerHTML = `<i data-lucide="${item.icon}" style="width:17px; height:17px;"></i><span>${item.label}</span>`;
-      btn.addEventListener("click", () => {
-        if (item.tab) {
+      group.items.forEach((item) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `admin-menu-item${item.isSub ? " is-sub" : ""}`;
+        btn.style.setProperty("--item-idx", String(itemIdx++));
+
+        let isActive = false;
+        if (item.tab && item.subBtnId) {
           const tabBtn = document.querySelector(`.admin-tab-btn[data-tab="${item.tab}"]`);
-          if (tabBtn) tabBtn.click();
-        } else if (item.btnId) {
-          const subBtn = document.getElementById(item.btnId);
-          if (subBtn) subBtn.click();
+          const subBtn = document.getElementById(item.subBtnId);
+          isActive = Boolean(tabBtn && tabBtn.classList.contains("active") && subBtn && subBtn.classList.contains("active"));
+        } else if (item.tab) {
+          const tabBtn = document.querySelector(`.admin-tab-btn[data-tab="${item.tab}"]`);
+          isActive = Boolean(tabBtn && tabBtn.classList.contains("active"));
+        } else if (item.subBtnId) {
+          const subBtn = document.getElementById(item.subBtnId);
+          isActive = Boolean(subBtn && subBtn.classList.contains("active"));
         }
-        closeAdminMenu();
+        if (isActive) btn.classList.add("active");
+
+        btn.innerHTML = `
+          <span class="admin-menu-item-left">
+            <span class="admin-menu-icon-wrap"><i data-lucide="${item.icon}" style="width:17px; height:17px;"></i></span>
+            <span>${item.label}</span>
+          </span>
+          <i data-lucide="chevron-right" style="width:16px; height:16px; opacity:0.5;"></i>
+        `;
+
+        btn.addEventListener("click", () => {
+          if (item.tab) {
+            const tabBtn = document.querySelector(`.admin-tab-btn[data-tab="${item.tab}"]`);
+            if (tabBtn && !tabBtn.classList.contains("active")) {
+              tabBtn.click();
+            }
+          }
+          if (item.subBtnId) {
+            const subBtn = document.getElementById(item.subBtnId);
+            if (subBtn) subBtn.click();
+          }
+          closeAdminMenu();
+        });
+
+        adminMenuList.appendChild(btn);
       });
-      adminMenuDropdown.appendChild(btn);
     });
 
     if (window.lucide) window.lucide.createIcons();
   }
 
-  if (btnAdminMenu && adminMenuDropdown) {
+  function openAdminMenu() {
+    if (!adminMenuOverlay || !btnAdminMenu) return;
+    renderAdminMenu();
+    adminMenuOverlay.classList.add("open");
+    adminMenuOverlay.setAttribute("aria-hidden", "false");
+    btnAdminMenu.setAttribute("aria-expanded", "true");
+    btnAdminMenu.classList.add("active");
+  }
+
+  if (btnAdminMenu && adminMenuOverlay) {
     btnAdminMenu.addEventListener("click", (e) => {
       e.stopPropagation();
-      const isOpen = adminMenuDropdown.style.display === "block";
-      if (isOpen) {
+      if (adminMenuOverlay.classList.contains("open")) {
         closeAdminMenu();
       } else {
-        renderAdminMenu();
-        adminMenuDropdown.style.display = "block";
-        btnAdminMenu.setAttribute("aria-expanded", "true");
-        btnAdminMenu.classList.add("active");
+        openAdminMenu();
       }
     });
 
-    document.addEventListener("click", (e) => {
-      if (
-        adminMenuDropdown.style.display === "block" &&
-        !adminMenuDropdown.contains(e.target) &&
-        !btnAdminMenu.contains(e.target)
-      ) {
+    if (btnAdminMenuClose) {
+      btnAdminMenuClose.addEventListener("click", closeAdminMenu);
+    }
+
+    if (btnMenuLogout) {
+      btnMenuLogout.addEventListener("click", () => {
         closeAdminMenu();
-      }
+        handleLogout();
+      });
+    }
+
+    adminMenuOverlay.addEventListener("click", (e) => {
+      if (e.target === adminMenuOverlay) closeAdminMenu();
     });
 
     document.addEventListener("keydown", (e) => {
@@ -289,7 +350,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (adminSubtabsWrapper) {
         adminSubtabsWrapper.style.display = targetId === "tab-appointments" ? "block" : "none";
       }
-      if (adminMenuDropdown && adminMenuDropdown.style.display === "block") {
+      if (adminMenuOverlay && adminMenuOverlay.classList.contains("open")) {
         renderAdminMenu();
       }
 
@@ -328,7 +389,7 @@ document.addEventListener("DOMContentLoaded", () => {
       activeBtn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
       const appContent = document.querySelector(".app-content");
       if (appContent) appContent.scrollTo({ top: 0, behavior: "smooth" });
-      if (adminMenuDropdown && adminMenuDropdown.style.display === "block") {
+      if (adminMenuOverlay && adminMenuOverlay.classList.contains("open")) {
         renderAdminMenu();
       }
     };

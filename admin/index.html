@@ -55,11 +55,6 @@ title: Portal Barbería
       </div>
     </div>
 
-    <!-- Menú desplegable hamburguesa -->
-    <div class="admin-menu-dropdown" id="admin-menu-dropdown" style="display:none;">
-      <!-- Opciones inyectadas según el rol en admin.js -->
-    </div>
-
     <!-- Barra de pestañas (solo visible para Super Admin) -->
     <div class="admin-tabs-scroll-wrap" id="admin-tabs-wrapper" style="display:none;">
       <button type="button" class="admin-tabs-arrow left" id="btn-tabs-prev" aria-label="Ver pestañas anteriores">
@@ -489,6 +484,29 @@ title: Portal Barbería
 
 </div>
 
+<!-- Menú Fullscreen Profesional -->
+<div class="admin-menu-overlay" id="admin-menu-overlay" aria-hidden="true">
+  <div class="admin-menu-sheet">
+    <div class="admin-menu-top">
+      <div>
+        <span class="admin-menu-kicker">Panel de Control</span>
+        <h3 id="admin-menu-user" class="admin-menu-title">Menú</h3>
+      </div>
+      <button type="button" class="admin-menu-close" id="btn-admin-menu-close" aria-label="Cerrar menú">
+        <i data-lucide="x" style="width:22px; height:22px;"></i>
+      </button>
+    </div>
+    <div class="admin-menu-list" id="admin-menu-list">
+      <!-- Opciones dinámicas según el rol -->
+    </div>
+    <div class="admin-menu-footer">
+      <button type="button" class="btn btn-danger" id="btn-menu-logout" style="width:100%;">
+        <i data-lucide="log-out" style="width:18px; height:18px;"></i> Cerrar Sesión
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Inyección de Lógica -->
 <script src="{{ '/assets/js/supabase-client.js' | relative_url }}"></script>
-<script src="{{ '/assets/js/admin.js' | relative_url }}?v=13"></script>
+<script src="{{ '/assets/js/admin.js' | relative_url }}?v=14"></script>
