@@ -36,14 +36,19 @@ document.addEventListener("DOMContentLoaded", () => {
   let barbersCache = null;
   let isCustomDateListenerBound = false;
 
+  const MY_APPOINTMENTS_KEY = "shopbarber_my_appointments_v1";
+  const CLIENT_PROFILE_KEY = "shopbarber_client_profile_v1";
+
   // --- Elementos del DOM ---
   const viewHome = document.getElementById("home-view");
   const viewBooking = document.getElementById("booking-view");
+  const viewMyAppointments = document.getElementById("my-appointments-view");
   const viewGallery = document.getElementById("gallery-view");
   const viewInfo = document.getElementById("info-view");
 
   const navHome = document.getElementById("nav-home");
   const navBooking = document.getElementById("nav-booking");
+  const navMyAppointments = document.getElementById("nav-my-appointments");
   const navGallery = document.getElementById("nav-gallery");
   const navInfo = document.getElementById("nav-info");
 
@@ -71,6 +76,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const views = {
       home: viewHome,
       booking: viewBooking,
+      "my-appointments": viewMyAppointments,
       gallery: viewGallery,
       info: viewInfo
     };
@@ -78,6 +84,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const navs = {
       home: navHome,
       booking: navBooking,
+      "my-appointments": navMyAppointments,
       gallery: navGallery,
       info: navInfo
     };
@@ -96,6 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (navHome) navHome.addEventListener("click", (e) => { e.preventDefault(); switchView("home"); });
   if (navBooking) navBooking.addEventListener("click", (e) => { e.preventDefault(); switchView("booking"); resetBookingWizard(); });
+  if (navMyAppointments) navMyAppointments.addEventListener("click", (e) => { e.preventDefault(); switchView("my-appointments"); loadMyAppointments(); });
   if (navGallery) navGallery.addEventListener("click", (e) => { e.preventDefault(); switchView("gallery"); });
   if (navInfo) navInfo.addEventListener("click", (e) => { e.preventDefault(); switchView("info"); });
 
@@ -104,6 +112,8 @@ document.addEventListener("DOMContentLoaded", () => {
   if (hash === "#booking") {
     switchView("booking");
     resetBookingWizard();
+  } else if (hash === "#my-appointments") {
+    switchView("my-appointments");
   } else if (hash === "#gallery") {
     switchView("gallery");
   } else if (hash === "#info") {
@@ -668,6 +678,17 @@ document.addEventListener("DOMContentLoaded", () => {
         timeGridContainer.innerHTML = "<p class='text-muted'>Por favor selecciona una fecha arriba.</p>";
       }
     } else if (newStep.pane === "pane-details") {
+      // Autocompletar último contacto guardado si los campos están vacíos
+      const savedProfile = readSavedClientProfile();
+      const nameInput = document.getElementById("client-name");
+      const phoneInput = document.getElementById("client-phone");
+      const emailInput = document.getElementById("client-email");
+      if (savedProfile) {
+        if (nameInput && !nameInput.value) nameInput.value = savedProfile.name || "";
+        if (phoneInput && !phoneInput.value) phoneInput.value = savedProfile.phone || "";
+        if (emailInput && !emailInput.value) emailInput.value = savedProfile.email || "";
+      }
+
       const rawDate = new Date(bookingState.selectedDate + "T00:00:00");
       const formattedDate = rawDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
 
@@ -761,21 +782,36 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
 
-        const { data, error } = await supabase
+        const clientToken = generateClientToken();
+        const basePayload = {
+          client_name: name,
+          client_phone: phone,
+          client_email: email,
+          barber_id: bookingState.barberId,
+          service_id: bookingState.serviceId,
+          appointment_date: bookingState.selectedDate,
+          appointment_time: bookingState.selectedTime + ":00",
+          status: "pending"
+        };
+
+        let { data, error } = await supabase
           .from("appointments")
-          .insert([
-            {
-              client_name: name,
-              client_phone: phone,
-              client_email: email,
-              barber_id: bookingState.barberId,
-              service_id: bookingState.serviceId,
-              appointment_date: bookingState.selectedDate,
-              appointment_time: bookingState.selectedTime + ":00",
-              status: "pending"
-            }
-          ])
+          .insert([{
+            ...basePayload,
+            client_token: clientToken,
+            price_at_booking: bookingState.servicePrice
+          }])
           .select();
+
+        // Fallback si el esquema remoto aún no tiene client_token / price_at_booking
+        if (error && error.message && (error.message.includes("client_token") || error.message.includes("price_at_booking"))) {
+          const retry = await supabase
+            .from("appointments")
+            .insert([basePayload])
+            .select();
+          data = retry.data;
+          error = retry.error;
+        }
 
         if (error) {
           if (error.code === "23505" || (error.message && error.message.toLowerCase().includes("duplicate"))) {
@@ -785,6 +821,22 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           throw error;
         }
+
+        const insertedRow = data && data[0] ? data[0] : null;
+        saveMyAppointmentLocal({
+          id: insertedRow ? insertedRow.id : Date.now(),
+          client_token: clientToken,
+          serviceName: bookingState.serviceName,
+          servicePrice: Number(bookingState.servicePrice) || 0,
+          serviceDuration: bookingState.serviceDuration || 30,
+          barberName: bookingState.barberName,
+          appointment_date: bookingState.selectedDate,
+          appointment_time: bookingState.selectedTime + ":00",
+          status: "pending",
+          createdAt: new Date().toISOString()
+        });
+        saveClientProfile({ name, phone, email: email || "" });
+        updateHomeAppointmentsBadge();
 
         const rawDate = new Date(bookingState.selectedDate + "T00:00:00");
         const formattedDate = rawDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
@@ -891,13 +943,248 @@ Por favor confirmen mi turno. ¡Muchas gracias!`;
   initLightboxEvents();
   window.refreshGalleryLightbox();
 
+  // --- 6. Historial "Mis Citas" (localStorage + RPC por client_token) ---
+  function generateClientToken() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    return `tok_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+  }
+
+  function readMyAppointments() {
+    try {
+      const raw = localStorage.getItem(MY_APPOINTMENTS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function writeMyAppointments(items) {
+    try {
+      localStorage.setItem(MY_APPOINTMENTS_KEY, JSON.stringify(items));
+    } catch (_) {}
+  }
+
+  function saveMyAppointmentLocal(entry) {
+    const list = readMyAppointments();
+    list.unshift(entry);
+    writeMyAppointments(list);
+  }
+
+  function readSavedClientProfile() {
+    try {
+      const raw = localStorage.getItem(CLIENT_PROFILE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function saveClientProfile(profile) {
+    try {
+      localStorage.setItem(CLIENT_PROFILE_KEY, JSON.stringify(profile));
+    } catch (_) {}
+  }
+
+  function updateHomeAppointmentsBadge() {
+    const badge = document.getElementById("home-active-appointments-badge");
+    if (!badge) return;
+    const activeCount = readMyAppointments().filter(
+      (a) => a.status === "pending" || a.status === "scheduled"
+    ).length;
+    if (activeCount > 0) {
+      badge.textContent = `(${activeCount})`;
+      badge.style.display = "inline";
+    } else {
+      badge.textContent = "";
+      badge.style.display = "none";
+    }
+  }
+
+  async function syncMyAppointmentsWithServer() {
+    const localList = readMyAppointments();
+    const tokens = localList.map((item) => item.client_token).filter(Boolean);
+    if (tokens.length === 0 || typeof supabase.rpc !== "function") {
+      return localList;
+    }
+
+    try {
+      const { data: remoteRows, error } = await supabase.rpc("get_my_appointments", {
+        p_tokens: tokens
+      });
+      if (error || !Array.isArray(remoteRows)) return localList;
+
+      // Mapear resultados por id o coincidencia de fecha/hora si hubiera múltiples
+      const byId = new Map();
+      remoteRows.forEach((row) => byId.set(String(row.id), row));
+
+      const merged = localList.map((localItem) => {
+        const remote = byId.get(String(localItem.id));
+        if (!remote) return localItem;
+        return {
+          ...localItem,
+          id: remote.id,
+          status: remote.status,
+          serviceName: remote.service_name || localItem.serviceName,
+          servicePrice: remote.price != null ? Number(remote.price) : localItem.servicePrice,
+          serviceDuration: remote.duration_minutes != null ? Number(remote.duration_minutes) : localItem.serviceDuration,
+          barberName: remote.barber_name || localItem.barberName,
+          appointment_date: remote.appointment_date || localItem.appointment_date,
+          appointment_time: remote.appointment_time || localItem.appointment_time
+        };
+      });
+
+      writeMyAppointments(merged);
+      updateHomeAppointmentsBadge();
+      return merged;
+    } catch (err) {
+      console.warn("No se pudo sincronizar Mis Citas:", err.message);
+      return localList;
+    }
+  }
+
+  const MY_STATUS_META = {
+    pending: { text: "Por Confirmar", cls: "status-pending" },
+    scheduled: { text: "Confirmado", cls: "status-scheduled" },
+    completed: { text: "Completado", cls: "status-completed" },
+    cancelled: { text: "Cancelado", cls: "status-cancelled" }
+  };
+
+  function renderMyAppointments(list) {
+    const container = document.getElementById("my-appointments-list");
+    const statCount = document.getElementById("my-appointments-count");
+    const statSpent = document.getElementById("my-appointments-spent");
+    const pendingCard = document.getElementById("my-appointments-pending-card");
+    const pendingTotalEl = document.getElementById("my-appointments-pending-total");
+    const btnClear = document.getElementById("btn-clear-my-appointments");
+
+    if (!container || !statCount || !statSpent) return;
+
+    const sorted = list.slice().sort((a, b) => {
+      const keyA = `${a.appointment_date || ""}T${a.appointment_time || ""}`;
+      const keyB = `${b.appointment_date || ""}T${b.appointment_time || ""}`;
+      return keyA < keyB ? 1 : keyA > keyB ? -1 : 0;
+    });
+
+    let spentTotal = 0;
+    let pendingTotal = 0;
+    sorted.forEach((item) => {
+      const price = Number(item.servicePrice) || 0;
+      if (item.status === "completed") {
+        spentTotal += price;
+      } else if (item.status === "pending" || item.status === "scheduled") {
+        pendingTotal += price;
+      }
+    });
+
+    statCount.textContent = sorted.length;
+    statSpent.textContent = `$${formatPrice(spentTotal)}`;
+
+    if (pendingCard && pendingTotalEl) {
+      if (pendingTotal > 0) {
+        pendingTotalEl.textContent = `$${formatPrice(pendingTotal)}`;
+        pendingCard.style.display = "flex";
+      } else {
+        pendingCard.style.display = "none";
+      }
+    }
+
+    if (btnClear) {
+      btnClear.style.display = sorted.length > 0 ? "flex" : "none";
+    }
+
+    if (sorted.length === 0) {
+      container.innerHTML = "<p class='text-muted' style='text-align:center; padding: 24px 0;'>Aún no tienes citas registradas en este dispositivo.</p>";
+      return;
+    }
+
+    container.innerHTML = "";
+    sorted.forEach((item) => {
+      const meta = MY_STATUS_META[item.status] || MY_STATUS_META.pending;
+      const rawDate = new Date((item.appointment_date || getLocalDateStr()) + "T00:00:00");
+      const formattedDate = rawDate.toLocaleDateString("es-ES", {
+        weekday: "short",
+        day: "numeric",
+        month: "short"
+      });
+      const timeStr = (item.appointment_time || "00:00").slice(0, 5);
+      const price = Number(item.servicePrice) || 0;
+
+      let waButtonHtml = "";
+      if ((item.status === "pending" || item.status === "scheduled") && window.shopWhatsappNumber) {
+        const cleanPhone = window.shopWhatsappNumber.replace(/\D/g, "");
+        if (cleanPhone) {
+          const msg = `Hola, te escribo sobre mi cita #${item.id} (${item.serviceName} con ${item.barberName} el ${formattedDate} a las ${timeStr} hs).`;
+          const waHref = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+          waButtonHtml = `
+            <a href="${escapeHtml(waHref)}" target="_blank" rel="noopener noreferrer" class="btn btn-small"
+              style="margin-top: 10px; background: rgba(37, 211, 102, 0.15); color: #25D366; border: 1px solid rgba(37, 211, 102, 0.35); text-decoration: none; justify-content: center;">
+              <i data-lucide="message-circle" style="width:15px; height:15px;"></i> Consultar por WhatsApp
+            </a>
+          `;
+        }
+      }
+
+      const card = document.createElement("div");
+      card.className = `appointment-list-item ${escapeHtml(item.status || "pending")}`;
+      card.innerHTML = `
+        <div class="appointment-header">
+          <span class="appointment-time-tag">${escapeHtml(formattedDate)} • ${escapeHtml(timeStr)} hs</span>
+          <span class="appointment-status-tag ${meta.cls}">${meta.text}</span>
+        </div>
+        <div class="appointment-details">
+          <p><strong>Servicio:</strong> ${escapeHtml(item.serviceName)} (${Number(item.serviceDuration) || 30} min)</p>
+          <p><strong>Barbero:</strong> ${escapeHtml(item.barberName)}</p>
+          <p><strong>Valor:</strong> <span style="color:var(--primary); font-weight:600;">$${formatPrice(price)}</span></p>
+        </div>
+        ${waButtonHtml}
+      `;
+      container.appendChild(card);
+    });
+
+    if (window.lucide) window.lucide.createIcons();
+  }
+
+  async function loadMyAppointments() {
+    const localList = readMyAppointments();
+    renderMyAppointments(localList);
+    const synced = await syncMyAppointmentsWithServer();
+    renderMyAppointments(synced);
+  }
+
+  const btnRefreshMyApps = document.getElementById("btn-refresh-my-appointments");
+  if (btnRefreshMyApps) {
+    btnRefreshMyApps.addEventListener("click", async () => {
+      btnRefreshMyApps.setAttribute("disabled", "true");
+      await loadMyAppointments();
+      btnRefreshMyApps.removeAttribute("disabled");
+    });
+  }
+
+  const btnClearMyApps = document.getElementById("btn-clear-my-appointments");
+  if (btnClearMyApps) {
+    btnClearMyApps.addEventListener("click", async () => {
+      if (!await showConfirm("¿Borrar el historial guardado en este dispositivo? (No cancela citas en la barbería).", "Limpiar Historial", "trash-2")) return;
+      writeMyAppointments([]);
+      updateHomeAppointmentsBadge();
+      renderMyAppointments([]);
+    });
+  }
+
   // --- Inicialización de la Aplicación con cargador de pantalla (loader) ---
   async function initApp() {
     try {
       await loadHomeSettings();
+      updateHomeAppointmentsBadge();
       const promises = [loadTeam()];
       if (window.location.hash === "#booking") {
         promises.push(loadServices());
+      } else if (window.location.hash === "#my-appointments") {
+        promises.push(loadMyAppointments());
+      } else if (readMyAppointments().length > 0) {
+        promises.push(syncMyAppointmentsWithServer());
       }
       await Promise.all(promises);
     } catch (err) {

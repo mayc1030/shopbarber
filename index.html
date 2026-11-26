@@ -50,6 +50,10 @@ title: Inicio & Reservas
   <button id="btn-start-booking" class="btn btn-primary" onclick="document.getElementById('nav-booking').click();">
     <i data-lucide="calendar"></i> Reservar un Turno
   </button>
+  <button id="btn-home-my-appointments" class="btn" onclick="document.getElementById('nav-my-appointments').click();"
+    style="margin-top: 12px; background: var(--bg-surface-elevated); color: var(--text-primary); border: 1px solid rgba(255,255,255,0.1);">
+    <i data-lucide="clock"></i> Ver Mis Citas <span id="home-active-appointments-badge" style="display:none; margin-left:4px; color:var(--primary); font-weight:700;"></span>
+  </button>
 </div>
 
 <!-- =========================================================================
@@ -177,12 +181,62 @@ title: Inicio & Reservas
       <button class="btn btn-primary" id="btn-reset-booking">
         <i data-lucide="home"></i> Volver al Inicio
       </button>
+      <button class="btn" id="btn-go-my-appointments" onclick="document.getElementById('nav-my-appointments').click();"
+        style="background: var(--bg-surface-elevated); color: var(--text-primary); border: 1px solid rgba(255,255,255,0.1);">
+        <i data-lucide="clock"></i> Ver Mis Citas
+      </button>
       <a href="#" target="_blank" class="btn" id="btn-whatsapp-confirm" style="display: none; justify-content: center; align-items: center; gap: 8px; background-color: #25D366; color: white; border-color: #25D366; text-decoration: none; font-weight: 600; padding: 12px;">
         <i data-lucide="message-circle"></i> Confirmar por WhatsApp
       </a>
     </div>
   </div>
 
+</div>
+
+<!-- =========================================================================
+     VISTA DE MIS CITAS (HISTORIAL CLIENTE SIN PERFIL)
+     ========================================================================= -->
+<div id="my-appointments-view" class="app-view">
+  <header class="brand-header">
+    <span class="brand-logo">Mis Citas</span>
+    <button type="button" id="btn-refresh-my-appointments" title="Actualizar estado de citas"
+      style="background:transparent; border:none; color:var(--primary); cursor:pointer; display:flex; align-items:center; gap:6px; font-size:0.85rem; padding:4px;">
+      <i data-lucide="refresh-cw" style="width:18px; height:18px;"></i> Actualizar
+    </button>
+  </header>
+
+  <div class="stats-grid" style="margin-bottom: 16px;">
+    <div class="stat-card">
+      <span class="stat-label">Total Citas</span>
+      <div class="stat-val" id="my-appointments-count">0</div>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Total Gastado</span>
+      <div class="stat-val" id="my-appointments-spent" style="color:var(--primary);">$0</div>
+    </div>
+  </div>
+
+  <div class="card" id="my-appointments-pending-card" style="display:none; padding: 12px 16px; margin-bottom: 16px; justify-content: space-between; align-items: center;">
+    <span class="service-meta" style="margin:0;">En citas pendientes / confirmadas:</span>
+    <strong id="my-appointments-pending-total" style="color:var(--warning);">$0</strong>
+  </div>
+
+  <p class="service-meta" style="font-size: 0.8rem; margin-bottom: 16px;">
+    Este historial se guarda en este dispositivo sin crear cuenta y actualiza el estado cuando tu barbero confirma o completa tu turno.
+  </p>
+
+  <div id="my-appointments-list" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+    <p class="text-muted" style="text-align:center; padding: 24px 0;">Aún no tienes citas registradas en este dispositivo.</p>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px; padding-bottom: 100px;">
+    <button class="btn btn-primary" onclick="document.getElementById('nav-booking').click();">
+      <i data-lucide="calendar-plus"></i> Agendar Nueva Cita
+    </button>
+    <button class="btn btn-danger btn-small" id="btn-clear-my-appointments" style="display:none; background:transparent; border:1px solid rgba(239,68,68,0.4);">
+      <i data-lucide="trash-2"></i> Limpiar Historial Local
+    </button>
+  </div>
 </div>
 
 <!-- =========================================================================

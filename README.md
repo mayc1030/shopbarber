@@ -14,6 +14,7 @@ Aplicación web *mobile-first* para la gestión de citas, servicios, barberos y 
   3. Selección de fecha (calendario semanal + selector completo) y franja horaria disponible, respetando la duración del servicio, horarios configurados, días cerrados y evitando solapamientos o reservas duplicadas mediante RPC segura (`get_busy_slots`).
   4. Formulario de contacto del cliente con resumen de la cita.
   5. Confirmación de solicitud en estado pendiente y botón opcional de envío por **WhatsApp**.
+- **Historial "Mis Citas" sin perfil:** Guarda las citas del cliente en `localStorage` con un `client_token` único, muestra cuánto ha gastado (en citas completadas) y sincroniza su estado en vivo mediante la RPC segura `get_my_appointments`.
 - **Galería con Lightbox:** Portafolio de cortes publicado desde el panel administrativo.
 - **Información del local:** Mapa embebido de Google Maps, botón *Cómo Llegar*, perfiles públicos del equipo (biografía y especialidades), políticas de cancelación y redes sociales.
 

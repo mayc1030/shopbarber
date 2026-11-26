@@ -586,6 +586,32 @@
             });
           return { data: rows, error: null };
         }
+        if (fnName === "get_my_appointments") {
+          const tokens = Array.isArray(params.p_tokens) ? params.p_tokens : [];
+          const rows = (db.appointments || [])
+            .filter((a) => a.client_token && tokens.includes(a.client_token))
+            .map((a) => {
+              const svc = (db.services || []).find((s) => String(s.id) === String(a.service_id));
+              const brb = (db.barbers || []).find((b) => String(b.id) === String(a.barber_id));
+              return {
+                id: a.id,
+                appointment_date: a.appointment_date,
+                appointment_time: a.appointment_time,
+                status: a.status,
+                service_name: svc ? svc.name : "Servicio",
+                duration_minutes: svc ? Number(svc.duration_minutes) || 30 : 30,
+                price: a.price_at_booking != null ? Number(a.price_at_booking) : (svc ? Number(svc.price) || 0 : 0),
+                barber_name: brb ? brb.name : "Sin Asignar",
+                created_at: a.created_at
+              };
+            })
+            .sort((a, b) => {
+              const keyA = `${a.appointment_date}T${a.appointment_time}`;
+              const keyB = `${b.appointment_date}T${b.appointment_time}`;
+              return keyA < keyB ? 1 : keyA > keyB ? -1 : 0;
+            });
+          return { data: rows, error: null };
+        }
         return { data: null, error: { message: `RPC simulada no soportada: ${fnName}` } };
       },
       storage: {

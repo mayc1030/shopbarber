@@ -42,6 +42,8 @@ create table if not exists public.appointments (
   client_name text not null,
   client_phone text not null,
   client_email text,
+  client_token text,
+  price_at_booking numeric,
   barber_id bigint references public.barbers(id) on delete cascade not null,
   service_id bigint references public.services(id) on delete cascade not null,
   appointment_date date not null,
@@ -49,6 +51,11 @@ create table if not exists public.appointments (
   status text default 'pending'::text check (status in ('pending', 'scheduled', 'completed', 'cancelled')) not null,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- Índice para consultar citas propias del cliente mediante token local
+create index if not exists appointments_client_token_idx
+  on public.appointments (client_token)
+  where client_token is not null;
 
 -- Evita doble reserva simultánea para el mismo barbero, fecha y hora (salvo citas canceladas)
 create unique index if not exists appointments_no_double_booking_idx
@@ -109,6 +116,42 @@ as $$
 $$;
 
 grant execute on function public.get_busy_slots(bigint, date) to anon, authenticated;
+
+-- Función pública segura para consultar historial propio por tokens guardados en localStorage
+create or replace function public.get_my_appointments(p_tokens text[])
+returns table (
+  id bigint,
+  appointment_date date,
+  appointment_time time without time zone,
+  status text,
+  service_name text,
+  duration_minutes integer,
+  price numeric,
+  barber_name text,
+  created_at timestamp with time zone
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    a.id,
+    a.appointment_date,
+    a.appointment_time,
+    a.status,
+    coalesce(s.name, 'Servicio') as service_name,
+    coalesce(s.duration_minutes, 30) as duration_minutes,
+    coalesce(a.price_at_booking, s.price, 0) as price,
+    coalesce(b.name, 'Sin Asignar') as barber_name,
+    a.created_at
+  from public.appointments a
+  left join public.services s on s.id = a.service_id
+  left join public.barbers b on b.id = a.barber_id
+  where a.client_token = any(p_tokens)
+  order by a.appointment_date desc, a.appointment_time desc;
+$$;
+
+grant execute on function public.get_my_appointments(text[]) to anon, authenticated;
 
 -- Políticas para PROFILES
 create policy "Usuarios leen su propio perfil"
