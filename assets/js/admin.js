@@ -149,6 +149,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const targetId = btn.dataset.tab;
       document.getElementById(targetId).classList.add("active");
 
+      const appContent = document.querySelector(".app-content");
+      if (appContent) appContent.scrollTo({ top: 0, behavior: "smooth" });
+
       if (targetId === "tab-appointments") {
         loadAppointments();
       } else if (targetId === "tab-services") {

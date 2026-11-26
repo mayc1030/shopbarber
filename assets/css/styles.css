@@ -905,3 +905,46 @@ h1, h2, h3, h4 {
     display: none !important;
   }
 }
+/* --- Encabezado y Tabs Fijos (Sticky) para Portal Admin en Móvil --- */
+.admin-sticky-top {
+  position: sticky;
+  top: -20px;
+  margin: -20px -20px 16px -20px;
+  padding: 12px 20px 0 20px;
+  background: rgba(10, 10, 11, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 60;
+}
+
+.admin-sticky-top .admin-header {
+  margin-bottom: 8px;
+}
+
+.admin-header-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.admin-greeting {
+  font-size: 1.1rem;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 190px;
+}
+
+.admin-sticky-top .admin-tab-bar {
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.admin-sticky-top .admin-tab-btn {
+  padding: 8px 14px;
+  font-size: 0.85rem;
+}
