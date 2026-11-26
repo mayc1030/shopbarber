@@ -135,34 +135,50 @@ document.addEventListener("DOMContentLoaded", () => {
     return item;
   }
 
+  // --- Helper reutilizable para barras de pestañas con scroll horizontal ---
+  function setupScrollableTabBar(wrapperId, barId, prevBtnId, nextBtnId) {
+    const wrapper = document.getElementById(wrapperId);
+    const bar = document.getElementById(barId);
+    const prevBtn = document.getElementById(prevBtnId);
+    const nextBtn = document.getElementById(nextBtnId);
+
+    function updateHints() {
+      if (!wrapper || !bar) return;
+      const maxScroll = bar.scrollWidth - bar.clientWidth;
+      wrapper.classList.toggle("has-left", bar.scrollLeft > 4);
+      wrapper.classList.toggle("has-right", maxScroll > 4 && bar.scrollLeft < maxScroll - 4);
+    }
+
+    if (bar) {
+      bar.addEventListener("scroll", updateHints, { passive: true });
+      window.addEventListener("resize", updateHints);
+    }
+    if (prevBtn && bar) {
+      prevBtn.addEventListener("click", () => bar.scrollBy({ left: -140, behavior: "smooth" }));
+    }
+    if (nextBtn && bar) {
+      nextBtn.addEventListener("click", () => bar.scrollBy({ left: 140, behavior: "smooth" }));
+    }
+
+    return updateHints;
+  }
+
   // --- Sub-pestañas de Admin (Solo Super Admin) ---
   const tabBtns = document.querySelectorAll(".admin-tab-btn");
   const subPanes = document.querySelectorAll(".admin-subpane");
   const adminTabsWrapper = document.getElementById("admin-tabs-wrapper");
-  const btnTabsPrev = document.getElementById("btn-tabs-prev");
-  const btnTabsNext = document.getElementById("btn-tabs-next");
-
-  function updateAdminTabsScrollHints() {
-    if (!adminTabsWrapper || !adminTabContainer) return;
-    const maxScroll = adminTabContainer.scrollWidth - adminTabContainer.clientWidth;
-    adminTabsWrapper.classList.toggle("has-left", adminTabContainer.scrollLeft > 4);
-    adminTabsWrapper.classList.toggle("has-right", maxScroll > 4 && adminTabContainer.scrollLeft < maxScroll - 4);
-  }
-
-  if (adminTabContainer) {
-    adminTabContainer.addEventListener("scroll", updateAdminTabsScrollHints, { passive: true });
-    window.addEventListener("resize", updateAdminTabsScrollHints);
-  }
-  if (btnTabsPrev && adminTabContainer) {
-    btnTabsPrev.addEventListener("click", () => {
-      adminTabContainer.scrollBy({ left: -140, behavior: "smooth" });
-    });
-  }
-  if (btnTabsNext && adminTabContainer) {
-    btnTabsNext.addEventListener("click", () => {
-      adminTabContainer.scrollBy({ left: 140, behavior: "smooth" });
-    });
-  }
+  const updateAdminTabsScrollHints = setupScrollableTabBar(
+    "admin-tabs-wrapper",
+    "admin-tab-container",
+    "btn-tabs-prev",
+    "btn-tabs-next"
+  );
+  const updateAppointmentSubtabsHints = setupScrollableTabBar(
+    "admin-subtabs-wrapper",
+    "admin-subtab-container",
+    "btn-subtabs-prev",
+    "btn-subtabs-next"
+  );
 
   tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -180,6 +196,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (targetId === "tab-appointments") {
         loadAppointments();
+        requestAnimationFrame(updateAppointmentSubtabsHints);
       } else if (targetId === "tab-services") {
         loadAdminServices();
       } else if (targetId === "tab-barbers") {
@@ -204,34 +221,27 @@ document.addEventListener("DOMContentLoaded", () => {
   const paneAgenda = document.getElementById("subtab-pane-agenda");
 
   if (btnSubtabProfile && btnSubtabPending && btnSubtabAgenda && paneProfile && panePending && paneAgenda) {
+    const activateSubtab = (activeBtn, activePane) => {
+      [btnSubtabProfile, btnSubtabPending, btnSubtabAgenda].forEach((b) => b.classList.remove("active"));
+      [paneProfile, panePending, paneAgenda].forEach((p) => { p.style.display = "none"; });
+      activeBtn.classList.add("active");
+      activePane.style.display = "block";
+      activeBtn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    };
+
     btnSubtabProfile.addEventListener("click", (e) => {
       e.preventDefault();
-      btnSubtabProfile.classList.add("active");
-      btnSubtabPending.classList.remove("active");
-      btnSubtabAgenda.classList.remove("active");
-      paneProfile.style.display = "block";
-      panePending.style.display = "none";
-      paneAgenda.style.display = "none";
+      activateSubtab(btnSubtabProfile, paneProfile);
     });
 
     btnSubtabPending.addEventListener("click", (e) => {
       e.preventDefault();
-      btnSubtabPending.classList.add("active");
-      btnSubtabProfile.classList.remove("active");
-      btnSubtabAgenda.classList.remove("active");
-      panePending.style.display = "block";
-      paneProfile.style.display = "none";
-      paneAgenda.style.display = "none";
+      activateSubtab(btnSubtabPending, panePending);
     });
 
     btnSubtabAgenda.addEventListener("click", (e) => {
       e.preventDefault();
-      btnSubtabAgenda.classList.add("active");
-      btnSubtabProfile.classList.remove("active");
-      btnSubtabPending.classList.remove("active");
-      paneAgenda.style.display = "block";
-      paneProfile.style.display = "none";
-      panePending.style.display = "none";
+      activateSubtab(btnSubtabAgenda, paneAgenda);
     });
   }
 
@@ -311,7 +321,10 @@ document.addEventListener("DOMContentLoaded", () => {
         panelSuperAdmin.style.display = "block";
         if (adminTabsWrapper) adminTabsWrapper.style.display = "block";
         adminTabContainer.style.display = "flex";
-        requestAnimationFrame(updateAdminTabsScrollHints);
+        requestAnimationFrame(() => {
+          updateAdminTabsScrollHints();
+          updateAppointmentSubtabsHints();
+        });
         adminOnlyTabIds.forEach((id) => {
           const el = document.getElementById(id);
           if (el) el.style.display = "";
@@ -366,6 +379,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         await loadAppointments();
+        requestAnimationFrame(updateAppointmentSubtabsHints);
       } else {
         userGreeting.textContent = "Usuario no autorizado";
         userRoleTag.textContent = "Sin Rol Asignado";
