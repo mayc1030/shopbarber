@@ -168,6 +168,97 @@ document.addEventListener("DOMContentLoaded", () => {
   const subPanes = document.querySelectorAll(".admin-subpane");
   const adminTabsWrapper = document.getElementById("admin-tabs-wrapper");
   const adminSubtabsWrapper = document.getElementById("admin-subtabs-wrapper");
+  const btnAdminMenu = document.getElementById("btn-admin-menu");
+  const adminMenuDropdown = document.getElementById("admin-menu-dropdown");
+
+  function closeAdminMenu() {
+    if (!adminMenuDropdown || !btnAdminMenu) return;
+    adminMenuDropdown.style.display = "none";
+    btnAdminMenu.setAttribute("aria-expanded", "false");
+    btnAdminMenu.classList.remove("active");
+  }
+
+  function renderAdminMenu() {
+    if (!adminMenuDropdown) return;
+    const isAdmin = Boolean(userProfile && userProfile.is_admin);
+    const items = isAdmin
+      ? [
+          { label: "Citas del Día", icon: "calendar", targetId: null, tab: "tab-appointments" },
+          { label: "Servicios", icon: "scissors", targetId: null, tab: "tab-services" },
+          { label: "Barberos", icon: "users", targetId: null, tab: "tab-barbers" },
+          { label: "Galería", icon: "image", targetId: null, tab: "tab-gallery" },
+          { label: "Inicio y Horarios", icon: "home", targetId: null, tab: "tab-homeconfig" },
+          { label: "Reportes", icon: "bar-chart-2", targetId: null, tab: "tab-reports" }
+        ]
+      : barberProfile
+        ? [
+            { label: "Mi Perfil", icon: "user", btnId: "btn-subtab-profile" },
+            { label: "Solicitudes por Confirmar", icon: "clock", btnId: "btn-subtab-pending" },
+            { label: "Agenda / Citas Agendadas", icon: "calendar-check", btnId: "btn-subtab-agenda" }
+          ]
+        : [];
+
+    adminMenuDropdown.innerHTML = "";
+    items.forEach((item) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "admin-menu-item";
+
+      let isActive = false;
+      if (item.tab) {
+        const tabBtn = document.querySelector(`.admin-tab-btn[data-tab="${item.tab}"]`);
+        isActive = Boolean(tabBtn && tabBtn.classList.contains("active"));
+      } else if (item.btnId) {
+        const subBtn = document.getElementById(item.btnId);
+        isActive = Boolean(subBtn && subBtn.classList.contains("active"));
+      }
+      if (isActive) btn.classList.add("active");
+
+      btn.innerHTML = `<i data-lucide="${item.icon}" style="width:17px; height:17px;"></i><span>${item.label}</span>`;
+      btn.addEventListener("click", () => {
+        if (item.tab) {
+          const tabBtn = document.querySelector(`.admin-tab-btn[data-tab="${item.tab}"]`);
+          if (tabBtn) tabBtn.click();
+        } else if (item.btnId) {
+          const subBtn = document.getElementById(item.btnId);
+          if (subBtn) subBtn.click();
+        }
+        closeAdminMenu();
+      });
+      adminMenuDropdown.appendChild(btn);
+    });
+
+    if (window.lucide) window.lucide.createIcons();
+  }
+
+  if (btnAdminMenu && adminMenuDropdown) {
+    btnAdminMenu.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isOpen = adminMenuDropdown.style.display === "block";
+      if (isOpen) {
+        closeAdminMenu();
+      } else {
+        renderAdminMenu();
+        adminMenuDropdown.style.display = "block";
+        btnAdminMenu.setAttribute("aria-expanded", "true");
+        btnAdminMenu.classList.add("active");
+      }
+    });
+
+    document.addEventListener("click", (e) => {
+      if (
+        adminMenuDropdown.style.display === "block" &&
+        !adminMenuDropdown.contains(e.target) &&
+        !btnAdminMenu.contains(e.target)
+      ) {
+        closeAdminMenu();
+      }
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeAdminMenu();
+    });
+  }
   const updateAdminTabsScrollHints = setupScrollableTabBar(
     "admin-tabs-wrapper",
     "admin-tab-container",
@@ -197,6 +288,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (adminSubtabsWrapper) {
         adminSubtabsWrapper.style.display = targetId === "tab-appointments" ? "block" : "none";
+      }
+      if (adminMenuDropdown && adminMenuDropdown.style.display === "block") {
+        renderAdminMenu();
       }
 
       if (targetId === "tab-appointments") {
@@ -234,6 +328,9 @@ document.addEventListener("DOMContentLoaded", () => {
       activeBtn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
       const appContent = document.querySelector(".app-content");
       if (appContent) appContent.scrollTo({ top: 0, behavior: "smooth" });
+      if (adminMenuDropdown && adminMenuDropdown.style.display === "block") {
+        renderAdminMenu();
+      }
     };
 
     btnSubtabProfile.addEventListener("click", (e) => {
@@ -349,6 +446,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         await loadAppointments();
+        if (btnAdminMenu) btnAdminMenu.style.display = "inline-flex";
       } else if (barberProfile) {
         userGreeting.textContent = `Hola, ${barberProfile.name}`;
         userRoleTag.textContent = "Barbero Staff";
@@ -388,8 +486,11 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         await loadAppointments();
+        if (btnAdminMenu) btnAdminMenu.style.display = "inline-flex";
         requestAnimationFrame(updateAppointmentSubtabsHints);
       } else {
+        if (btnAdminMenu) btnAdminMenu.style.display = "none";
+        closeAdminMenu();
         userGreeting.textContent = "Usuario no autorizado";
         userRoleTag.textContent = "Sin Rol Asignado";
         userRoleTag.className = "appointment-status-tag status-cancelled";

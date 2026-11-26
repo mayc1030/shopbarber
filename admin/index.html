@@ -39,15 +39,25 @@ title: Portal Barbería
 <div id="admin-dashboard-view" class="app-view" style="display:none;">
   
   <div class="admin-sticky-top">
-    <!-- Encabezado del Dashboard con saludo y Cierre de Sesión -->
+    <!-- Encabezado del Dashboard con saludo, Menú y Cierre de Sesión -->
     <div class="admin-header">
       <div class="admin-header-info">
         <h2 id="user-greeting" class="admin-greeting">Cargando...</h2>
         <span id="user-role-tag" class="appointment-status-tag">Rol</span>
       </div>
-      <div class="logout-icon" id="btn-logout" title="Cerrar Sesión">
-        <i data-lucide="log-out" style="width:22px; height:22px;"></i>
+      <div class="admin-header-actions">
+        <button type="button" class="admin-menu-btn" id="btn-admin-menu" title="Menú de secciones" aria-label="Menú de secciones" aria-expanded="false">
+          <i data-lucide="menu" style="width:22px; height:22px;"></i>
+        </button>
+        <div class="logout-icon" id="btn-logout" title="Cerrar Sesión">
+          <i data-lucide="log-out" style="width:22px; height:22px;"></i>
+        </div>
       </div>
+    </div>
+
+    <!-- Menú desplegable hamburguesa -->
+    <div class="admin-menu-dropdown" id="admin-menu-dropdown" style="display:none;">
+      <!-- Opciones inyectadas según el rol en admin.js -->
     </div>
 
     <!-- Barra de pestañas (solo visible para Super Admin) -->
@@ -481,4 +491,4 @@ title: Portal Barbería
 
 <!-- Inyección de Lógica -->
 <script src="{{ '/assets/js/supabase-client.js' | relative_url }}"></script>
-<script src="{{ '/assets/js/admin.js' | relative_url }}?v=12"></script>
+<script src="{{ '/assets/js/admin.js' | relative_url }}?v=13"></script>
