@@ -3,10 +3,19 @@
 // =========================================================================
 
 document.addEventListener("DOMContentLoaded", () => {
+  const {
+    escapeHtml,
+    sanitizeUrl,
+    getLocalDateStr,
+    getLocalDateOffset,
+    formatPrice,
+    parseClosedDays
+  } = window.AppUtils;
+
   // --- Estado de la sesión ---
   let currentUserSession = null;
   let userProfile = null;
-  let barberProfile = null; // Si el usuario es un barbero
+  let barberProfile = null;
 
   // --- Elementos del DOM ---
   const viewLogin = document.getElementById("admin-login-view");
@@ -14,16 +23,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const formLogin = document.getElementById("admin-login-form");
   const btnLogout = document.getElementById("btn-logout");
 
-  // Encabezados
   const userGreeting = document.getElementById("user-greeting");
   const userRoleTag = document.getElementById("user-role-tag");
 
-  // Vistas específicas de Roles
   const panelSuperAdmin = document.getElementById("panel-superadmin");
   const panelBarber = document.getElementById("panel-barber");
   const adminTabContainer = document.getElementById("admin-tab-container");
 
-  // Contenedores de Listados e Información
   const listAppointments = document.getElementById("list-appointments");
   const statAppointmentsCount = document.getElementById("stat-appointments-count");
   const statEarnings = document.getElementById("stat-earnings");
@@ -36,23 +42,108 @@ document.addEventListener("DOMContentLoaded", () => {
   const barberPreviewText = document.getElementById("barber-preview-text");
   const editSpecialtiesInput = document.getElementById("edit-specialties");
 
-  // Formulario Gestionar Servicios (Super Admin)
   const formManageService = document.getElementById("form-manage-service");
   const listAdminServices = document.getElementById("list-admin-services");
 
-  // Formularios Super Admin adicionales
   const formManageBarber = document.getElementById("form-manage-barber");
   const listAdminBarbers = document.getElementById("list-admin-barbers");
   const formManageHome = document.getElementById("form-manage-home");
+
+  const STATUS_META = {
+    pending: { text: "Por Confirmar", cls: "status-pending" },
+    scheduled: { text: "Confirmado", cls: "status-scheduled" },
+    completed: { text: "Completado", cls: "status-completed" },
+    cancelled: { text: "Cancelado", cls: "status-cancelled" }
+  };
+
+  function getStatusMeta(status) {
+    return STATUS_META[status] || STATUS_META.scheduled;
+  }
+
+  function renderAppointmentCard(app, options = {}) {
+    const {
+      showDate = false,
+      highlightPending = false,
+      showActions = true,
+      showBarber = Boolean(userProfile && userProfile.is_admin)
+    } = options;
+
+    const item = document.createElement("div");
+    item.className = `appointment-list-item ${escapeHtml(app.status)}`;
+    if (highlightPending && app.status === "pending") {
+      item.style.borderColor = "var(--warning)";
+    }
+
+    const price = app.services ? parseFloat(app.services.price) : 0;
+    const formattedTime = (app.appointment_time || "00:00").slice(0, 5);
+    const serviceName = app.services ? app.services.name : "Servicio Desconocido";
+    const barberName = app.barbers ? app.barbers.name : "Sin Asignar";
+
+    const rawDate = new Date(app.appointment_date + "T00:00:00");
+    const formattedDate = rawDate.toLocaleDateString("es-ES", {
+      weekday: "short",
+      day: "numeric",
+      month: "short"
+    });
+    const timeText = showDate ? `${formattedDate} - ${formattedTime} hs` : `${formattedTime} hs`;
+
+    const { text: statusText, cls: statusClass } = getStatusMeta(app.status);
+    const timeTagStyle = highlightPending ? "style=\"color: var(--warning);\"" : "";
+
+    let actionsHtml = "";
+    if (showActions && app.status === "pending") {
+      actionsHtml = `
+        <div class="appointment-actions">
+          <button class="btn btn-primary btn-small btn-accept" data-id="${escapeHtml(app.id)}">Aceptar</button>
+          <button class="btn btn-danger btn-small btn-cancel" data-id="${escapeHtml(app.id)}">Cancelar</button>
+        </div>
+      `;
+    } else if (showActions && app.status === "scheduled") {
+      actionsHtml = `
+        <div class="appointment-actions">
+          <button class="btn btn-primary btn-small btn-complete" data-id="${escapeHtml(app.id)}">Completar</button>
+          <button class="btn btn-danger btn-small btn-cancel" data-id="${escapeHtml(app.id)}">Cancelar</button>
+        </div>
+      `;
+    }
+
+    item.innerHTML = `
+      <div class="appointment-header">
+        <span class="appointment-time-tag" ${timeTagStyle}>${escapeHtml(timeText)}</span>
+        <span class="appointment-status-tag ${statusClass}">${statusText}</span>
+      </div>
+      <div class="appointment-details">
+        <p><strong>Cliente:</strong> ${escapeHtml(app.client_name)} (${escapeHtml(app.client_phone)})</p>
+        ${app.client_email ? `<p><strong>Email:</strong> ${escapeHtml(app.client_email)}</p>` : ""}
+        <p><strong>Servicio:</strong> ${escapeHtml(serviceName)} ($${formatPrice(price)})</p>
+        ${showBarber ? `<p><strong>Barbero:</strong> ${escapeHtml(barberName)}</p>` : ""}
+      </div>
+      ${actionsHtml}
+    `;
+
+    if (showActions) {
+      const btnAccept = item.querySelector(".btn-accept");
+      if (btnAccept) btnAccept.addEventListener("click", () => updateAppointmentStatus(app.id, "scheduled"));
+
+      const btnComplete = item.querySelector(".btn-complete");
+      if (btnComplete) btnComplete.addEventListener("click", () => updateAppointmentStatus(app.id, "completed"));
+
+      const btnCancel = item.querySelector(".btn-cancel");
+      if (btnCancel) btnCancel.addEventListener("click", () => updateAppointmentStatus(app.id, "cancelled"));
+    }
+
+    return item;
+  }
 
   // --- Sub-pestañas de Admin (Solo Super Admin) ---
   const tabBtns = document.querySelectorAll(".admin-tab-btn");
   const subPanes = document.querySelectorAll(".admin-subpane");
 
-  tabBtns.forEach(btn => {
+  tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
-      tabBtns.forEach(b => b.classList.remove("active"));
-      subPanes.forEach(p => p.classList.remove("active"));
+      if (!userProfile || !userProfile.is_admin) return;
+      tabBtns.forEach((b) => b.classList.remove("active"));
+      subPanes.forEach((p) => p.classList.remove("active"));
 
       btn.classList.add("active");
       const targetId = btn.dataset.tab;
@@ -78,7 +169,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnSubtabProfile = document.getElementById("btn-subtab-profile");
   const btnSubtabPending = document.getElementById("btn-subtab-pending");
   const btnSubtabAgenda = document.getElementById("btn-subtab-agenda");
-  
+
   const paneProfile = document.getElementById("panel-barber");
   const panePending = document.getElementById("subtab-pane-pending");
   const paneAgenda = document.getElementById("subtab-pane-agenda");
@@ -131,18 +222,14 @@ document.addEventListener("DOMContentLoaded", () => {
       } else {
         if (navAdmin) navAdmin.style.display = "none";
         showLoginView();
-        if (typeof window.hidePageLoader === 'function') {
-          window.hidePageLoader();
-        }
+        if (typeof window.hidePageLoader === "function") window.hidePageLoader();
       }
     } catch (err) {
       console.error("Error comprobando sesión:", err.message);
       const navAdmin = document.getElementById("nav-admin");
       if (navAdmin) navAdmin.style.display = "none";
       showLoginView();
-      if (typeof window.hidePageLoader === 'function') {
-        window.hidePageLoader();
-      }
+      if (typeof window.hidePageLoader === "function") window.hidePageLoader();
     }
   }
 
@@ -161,7 +248,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const userId = currentUserSession.user.id;
 
     try {
-      // a. Buscar en la tabla de perfiles para ver si es Super Admin
       const { data: profile, error: profileErr } = await supabase
         .from("profiles")
         .select("*")
@@ -171,8 +257,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (profileErr) throw profileErr;
       userProfile = profile;
 
-      // b. Buscar en la tabla de barberos para ver si está asignado como barbero
-      const { data: barber, error: barberErr } = await supabase
+      const { data: barber } = await supabase
         .from("barbers")
         .select("*")
         .eq("user_id", userId)
@@ -180,24 +265,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
       barberProfile = barber;
 
-      // c. Configurar UI según Rol
       showDashboardView();
 
-      // Inicializar filtro de fecha con el día de hoy
+      // Inicializar filtro de fecha con la fecha LOCAL de hoy
       if (!dateFilterInput.value) {
-        dateFilterInput.value = new Date().toISOString().split("T")[0];
+        dateFilterInput.value = getLocalDateStr();
       }
 
+      const adminOnlyTabIds = ["tab-services", "tab-barbers", "tab-gallery", "tab-homeconfig", "tab-reports"];
+
       if (userProfile.is_admin) {
-        // --- Modo Super Admin ---
-        userGreeting.innerText = `Hola, ${currentUserSession.user.email.split("@")[0]}`;
-        userRoleTag.innerText = "Super Administrador";
+        userGreeting.textContent = `Hola, ${currentUserSession.user.email.split("@")[0]}`;
+        userRoleTag.textContent = "Super Administrador";
         userRoleTag.className = "appointment-status-tag status-scheduled";
 
         panelSuperAdmin.style.display = "block";
         adminTabContainer.style.display = "flex";
+        adminOnlyTabIds.forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.style.display = "";
+        });
 
-        // Ocultar pestaña de Perfil y activar Solicitudes por defecto
         if (btnSubtabProfile) btnSubtabProfile.style.display = "none";
         if (btnSubtabPending && btnSubtabAgenda && paneProfile && panePending && paneAgenda) {
           btnSubtabPending.classList.add("active");
@@ -210,29 +298,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
         await loadAppointments();
       } else if (barberProfile) {
-        // --- Modo Barbero ---
-        userGreeting.innerText = `Hola, ${barberProfile.name}`;
-        userRoleTag.innerText = "Barbero Staff";
+        userGreeting.textContent = `Hola, ${barberProfile.name}`;
+        userRoleTag.textContent = "Barbero Staff";
         userRoleTag.className = "appointment-status-tag status-completed";
 
         panelSuperAdmin.style.display = "none";
-        adminTabContainer.style.display = "none"; // Ocultar pestañas de admin global
+        adminTabContainer.style.display = "none";
 
-        // Bloqueo estricto de subpaneles de Super Admin
-        document.getElementById("tab-services").style.display = "none";
-        document.getElementById("tab-barbers").style.display = "none";
-        document.getElementById("tab-homeconfig").style.display = "none";
+        // Bloqueo estricto de todos los subpaneles exclusivos de Super Admin
+        adminOnlyTabIds.forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) {
+            el.style.display = "none";
+            el.classList.remove("active");
+          }
+        });
 
-        // Rellenar formulario de perfil de barbero
         editBioInput.value = barberProfile.bio || "";
         editSpecialtiesInput.value = barberProfile.specialties ? barberProfile.specialties.join(", ") : "";
-        if (barberProfile.photo_url) {
-          barberPreviewImg.src = barberProfile.photo_url;
+        const safePhoto = sanitizeUrl(barberProfile.photo_url, "", { allowDataImage: true });
+        if (safePhoto) {
+          barberPreviewImg.src = safePhoto;
           barberPreviewImg.style.display = "block";
           barberPreviewText.style.display = "none";
         }
 
-        // Mostrar pestaña de Perfil y activarla por defecto ("de primero")
         if (btnSubtabProfile && btnSubtabPending && btnSubtabAgenda && paneProfile && panePending && paneAgenda) {
           btnSubtabProfile.style.display = "block";
           btnSubtabProfile.classList.add("active");
@@ -245,23 +335,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
         await loadAppointments();
       } else {
-        // Usuario autenticado pero sin rol de admin ni barbero
-        userGreeting.innerText = "Usuario no autorizado";
-        userRoleTag.innerText = "Sin Rol Asignado";
+        userGreeting.textContent = "Usuario no autorizado";
+        userRoleTag.textContent = "Sin Rol Asignado";
         userRoleTag.className = "appointment-status-tag status-cancelled";
         listAppointments.innerHTML = "<p class='text-danger'>Tu cuenta no está vinculada a ningún barbero o administración. Contacta al soporte.</p>";
         panelSuperAdmin.style.display = "none";
         panelBarber.style.display = "none";
       }
-
     } catch (err) {
       console.error("Error cargando perfil del usuario:", err.message);
       await showAlert("Error al cargar perfil de usuario: " + err.message, "Error de Perfil", "alert-triangle");
       handleLogout();
     } finally {
-      if (typeof window.hidePageLoader === 'function') {
-        window.hidePageLoader();
-      }
+      if (typeof window.hidePageLoader === "function") window.hidePageLoader();
     }
   }
 
@@ -275,7 +361,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const btnSubmit = formLogin.querySelector("button[type='submit']");
 
       btnSubmit.setAttribute("disabled", "true");
-      btnSubmit.innerText = "Iniciando sesión...";
+      btnSubmit.textContent = "Iniciando sesión...";
 
       try {
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -294,7 +380,7 @@ document.addEventListener("DOMContentLoaded", () => {
         await showAlert("Credenciales inválidas o error de red: " + err.message, "Error de Autenticación", "alert-triangle");
       } finally {
         btnSubmit.removeAttribute("disabled");
-        btnSubmit.innerText = "Ingresar";
+        btnSubmit.textContent = "Ingresar";
       }
     });
   }
@@ -308,7 +394,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const agendaTitle = document.getElementById("agenda-section-title");
     if (agendaTitle) {
-      agendaTitle.innerText = selectedDate ? "Agenda del Día" : "Todas las Citas Agendadas";
+      agendaTitle.textContent = selectedDate ? "Agenda del Día" : "Todas las Citas Agendadas";
     }
 
     try {
@@ -328,7 +414,6 @@ document.addEventListener("DOMContentLoaded", () => {
         query = query.eq("status", "scheduled");
       }
 
-      // Si es barbero, filtrar únicamente sus citas
       if (!userProfile.is_admin && barberProfile) {
         query = query.eq("barber_id", barberProfile.id);
       }
@@ -337,96 +422,31 @@ document.addEventListener("DOMContentLoaded", () => {
       if (error) throw error;
 
       listAppointments.innerHTML = "";
-
-      // Calcular Estadísticas
-      let totalCitas = appointments.length;
+      const totalCitas = appointments.length;
       let totalGanancias = 0;
 
-      statAppointmentsCount.innerText = totalCitas;
+      statAppointmentsCount.textContent = totalCitas;
 
       if (totalCitas === 0) {
         listAppointments.innerHTML = "<p class='text-muted' style='text-align:center; padding: 20px 0;'>No hay citas agendadas para este día.</p>";
-        statEarnings.innerText = "$0.00";
+        statEarnings.textContent = "$0";
         return;
       }
 
-      appointments.forEach(app => {
-        const item = document.createElement("div");
-        item.className = `appointment-list-item ${app.status}`;
-
+      appointments.forEach((app) => {
         const price = app.services ? parseFloat(app.services.price) : 0;
         if (app.status === "completed") {
           totalGanancias += price;
         }
-
-        const formattedTime = app.appointment_time.slice(0, 5);
-        const serviceName = app.services ? app.services.name : "Servicio Desconocido";
-        const barberName = app.barbers ? app.barbers.name : "Sin Asignar";
-
-        // Formatear la fecha para cuando mostramos todas las citas agendadas
-        const rawDate = new Date(app.appointment_date + "T00:00:00");
-        const formattedDate = rawDate.toLocaleDateString("es-ES", { weekday: 'short', day: 'numeric', month: 'short' });
-        const timeText = selectedDate ? `${formattedTime} hs` : `${formattedDate} - ${formattedTime} hs`;
-
-        // Traducir etiquetas de estado
-        let statusText = "Confirmado";
-        let statusClass = "status-scheduled";
-        if (app.status === "pending") {
-          statusText = "Por Confirmar";
-          statusClass = "status-pending";
-        } else if (app.status === "completed") {
-          statusText = "Completado";
-          statusClass = "status-completed";
-        } else if (app.status === "cancelled") {
-          statusText = "Cancelado";
-          statusClass = "status-cancelled";
-        }
-
-        item.innerHTML = `
-          <div class="appointment-header">
-            <span class="appointment-time-tag">${timeText}</span>
-            <span class="appointment-status-tag ${statusClass}">${statusText}</span>
-          </div>
-          <div class="appointment-details">
-            <p><strong>Cliente:</strong> ${app.client_name} (${app.client_phone})</p>
-            ${app.client_email ? `<p><strong>Email:</strong> ${app.client_email}</p>` : ''}
-            <p><strong>Servicio:</strong> ${serviceName} ($${Number(price).toLocaleString('es-CO')})</p>
-            ${userProfile.is_admin ? `<p><strong>Barbero:</strong> ${barberName}</p>` : ''}
-          </div>
-          ${app.status === 'pending' ? `
-            <div class="appointment-actions">
-              <button class="btn btn-primary btn-small btn-accept" data-id="${app.id}">Aceptar</button>
-              <button class="btn btn-danger btn-small btn-cancel" data-id="${app.id}">Cancelar</button>
-            </div>
-          ` : app.status === 'scheduled' ? `
-            <div class="appointment-actions">
-              <button class="btn btn-primary btn-small btn-complete" data-id="${app.id}">Completar</button>
-              <button class="btn btn-danger btn-small btn-cancel" data-id="${app.id}">Cancelar</button>
-            </div>
-          ` : ''}
-        `;
-
-        // Listeners para acciones
-        const btnAccept = item.querySelector(".btn-accept");
-        if (btnAccept) {
-          btnAccept.addEventListener("click", () => updateAppointmentStatus(app.id, "scheduled"));
-        }
-
-        const btnComplete = item.querySelector(".btn-complete");
-        if (btnComplete) {
-          btnComplete.addEventListener("click", () => updateAppointmentStatus(app.id, "completed"));
-        }
-
-        const btnCancel = item.querySelector(".btn-cancel");
-        if (btnCancel) {
-          btnCancel.addEventListener("click", () => updateAppointmentStatus(app.id, "cancelled"));
-        }
-
-        listAppointments.appendChild(item);
+        const card = renderAppointmentCard(app, {
+          showDate: !selectedDate,
+          highlightPending: false,
+          showActions: true
+        });
+        listAppointments.appendChild(card);
       });
 
-      statEarnings.innerText = `$${Number(totalGanancias).toLocaleString('es-CO')}`;
-
+      statEarnings.textContent = `$${formatPrice(totalGanancias)}`;
     } catch (err) {
       console.error("Error al cargar citas:", err.message);
       listAppointments.innerHTML = "<p class='text-danger'>Error al cargar las citas de la base de datos.</p>";
@@ -449,7 +469,6 @@ document.addEventListener("DOMContentLoaded", () => {
         .order("appointment_date", { ascending: true })
         .order("appointment_time", { ascending: true });
 
-      // Si es barbero, filtrar únicamente sus citas
       if (!userProfile.is_admin && barberProfile) {
         query = query.eq("barber_id", barberProfile.id);
       }
@@ -463,60 +482,21 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       listPending.innerHTML = "";
-
-      pendingApps.forEach(app => {
-        const item = document.createElement("div");
-        item.className = "appointment-list-item pending";
-        item.style.borderColor = "var(--warning)";
-        
-        const price = app.services ? parseFloat(app.services.price) : 0;
-        const formattedTime = app.appointment_time.slice(0, 5);
-        const serviceName = app.services ? app.services.name : "Servicio Desconocido";
-        const barberName = app.barbers ? app.barbers.name : "Sin Asignar";
-
-        // Formatear la fecha
-        const rawDate = new Date(app.appointment_date + "T00:00:00");
-        const formattedDate = rawDate.toLocaleDateString("es-ES", { weekday: 'short', day: 'numeric', month: 'short' });
-
-        item.innerHTML = `
-          <div class="appointment-header">
-            <span class="appointment-time-tag" style="color: var(--warning);">${formattedDate} - ${formattedTime} hs</span>
-            <span class="appointment-status-tag status-pending">Por Confirmar</span>
-          </div>
-          <div class="appointment-details">
-            <p><strong>Cliente:</strong> ${app.client_name} (${app.client_phone})</p>
-            ${app.client_email ? `<p><strong>Email:</strong> ${app.client_email}</p>` : ''}
-            <p><strong>Servicio:</strong> ${serviceName} ($${Number(price).toLocaleString('es-CO')})</p>
-            ${userProfile.is_admin ? `<p><strong>Barbero:</strong> ${barberName}</p>` : ''}
-          </div>
-          <div class="appointment-actions">
-            <button class="btn btn-primary btn-small btn-accept" data-id="${app.id}">Aceptar</button>
-            <button class="btn btn-danger btn-small btn-cancel" data-id="${app.id}">Cancelar</button>
-          </div>
-        `;
-
-        // Listeners
-        const btnAccept = item.querySelector(".btn-accept");
-        if (btnAccept) {
-          btnAccept.addEventListener("click", () => updateAppointmentStatus(app.id, "scheduled"));
-        }
-
-        const btnCancel = item.querySelector(".btn-cancel");
-        if (btnCancel) {
-          btnCancel.addEventListener("click", () => updateAppointmentStatus(app.id, "cancelled"));
-        }
-
-        listPending.appendChild(item);
+      pendingApps.forEach((app) => {
+        const card = renderAppointmentCard(app, {
+          showDate: true,
+          highlightPending: true,
+          showActions: true
+        });
+        listPending.appendChild(card);
       });
 
       if (window.lucide) window.lucide.createIcons();
-
     } catch (err) {
       console.error("Error al cargar citas pendientes:", err.message);
     }
   }
 
-  // Escuchar cambios en la fecha del filtro
   if (dateFilterInput) {
     dateFilterInput.addEventListener("change", loadAppointments);
   }
@@ -533,16 +513,16 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function updateAppointmentStatus(appointmentId, newStatus) {
-    let confirmMsg = `¿Estás seguro de actualizar el estado de esta cita?`;
-    if (newStatus === 'scheduled') {
-      confirmMsg = `¿Estás seguro de confirmar y aceptar esta cita?`;
-    } else if (newStatus === 'completed') {
-      confirmMsg = `¿Estás seguro de marcar esta cita como completada?`;
-    } else if (newStatus === 'cancelled') {
-      confirmMsg = `¿Estás seguro de cancelar esta cita?`;
+    let confirmMsg = "¿Estás seguro de actualizar el estado de esta cita?";
+    if (newStatus === "scheduled") {
+      confirmMsg = "¿Estás seguro de confirmar y aceptar esta cita?";
+    } else if (newStatus === "completed") {
+      confirmMsg = "¿Estás seguro de marcar esta cita como completada?";
+    } else if (newStatus === "cancelled") {
+      confirmMsg = "¿Estás seguro de cancelar esta cita?";
     }
 
-    if (!await showConfirm(confirmMsg, "Actualizar Estado", newStatus === 'cancelled' ? 'alert-triangle' : 'help-circle')) return;
+    if (!await showConfirm(confirmMsg, "Actualizar Estado", newStatus === "cancelled" ? "alert-triangle" : "help-circle")) return;
 
     try {
       const { error } = await supabase
@@ -551,8 +531,6 @@ document.addEventListener("DOMContentLoaded", () => {
         .eq("id", appointmentId);
 
       if (error) throw error;
-
-      // Recargar citas
       loadAppointments();
     } catch (err) {
       console.error("Error actualizando cita:", err.message);
@@ -567,37 +545,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const btnSubmit = formBarberProfile.querySelector("button[type='submit']");
       btnSubmit.setAttribute("disabled", "true");
-      btnSubmit.innerText = "Guardando...";
+      btnSubmit.textContent = "Guardando...";
 
       const bio = editBioInput.value.trim();
-      // Separar especialidades por coma y limpiar espacios
       const specialties = editSpecialtiesInput.value
         .split(",")
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
 
       try {
         let finalPhotoUrl = barberProfile.photo_url;
 
-        // Si el usuario seleccionó una imagen nueva, subirla a 'logos' bucket
         if (editPhotoFile && editPhotoFile.files.length > 0) {
-          btnSubmit.innerText = "Subiendo foto...";
+          btnSubmit.textContent = "Subiendo foto...";
           const file = editPhotoFile.files[0];
-          const fileExt = file.name.split('.').pop();
+          const fileExt = file.name.split(".").pop();
           const fileName = `barber_${currentUserSession.user.id}_${Date.now()}.${fileExt}`;
 
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('logos')
-            .upload(fileName, file, { cacheControl: '3600', upsert: true });
+          const { error: uploadError } = await supabase.storage
+            .from("logos")
+            .upload(fileName, file, { cacheControl: "3600", upsert: true });
 
           if (uploadError) throw new Error("Error al subir foto: " + uploadError.message);
 
           const { data: { publicUrl } } = supabase.storage
-            .from('logos')
+            .from("logos")
             .getPublicUrl(fileName);
 
           finalPhotoUrl = publicUrl;
-
           barberPreviewImg.src = finalPhotoUrl;
           barberPreviewImg.style.display = "block";
           barberPreviewText.style.display = "none";
@@ -615,17 +590,14 @@ document.addEventListener("DOMContentLoaded", () => {
         if (error) throw error;
         await showAlert("¡Perfil actualizado con éxito!", "Perfil Actualizado", "check-circle");
 
-        // Limpiar input file
         if (editPhotoFile) editPhotoFile.value = "";
-
-        // Recargar datos locales
         await loadUserDataAndRedirect();
       } catch (err) {
         console.error("Error actualizando perfil barbero:", err.message);
         await showAlert("Ocurrió un error al guardar: " + err.message, "Error al Guardar", "alert-triangle");
       } finally {
         btnSubmit.removeAttribute("disabled");
-        btnSubmit.innerText = "Guardar Cambios";
+        btnSubmit.textContent = "Guardar Cambios";
       }
     });
   }
@@ -648,42 +620,36 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      services.forEach(service => {
+      services.forEach((service) => {
         const item = document.createElement("div");
         item.className = "service-item";
         item.style.cursor = "default";
 
         item.innerHTML = `
           <div class="service-info">
-            <span class="service-name">${service.name} ${!service.active ? '<span class="text-danger">(Inactivo)</span>' : ''}</span>
-            <span class="service-meta">${service.duration_minutes} min • ${service.description || 'Sin descripción'}</span>
+            <span class="service-name">${escapeHtml(service.name)} ${!service.active ? '<span class="text-danger">(Inactivo)</span>' : ""}</span>
+            <span class="service-meta">${Number(service.duration_minutes) || 30} min • ${escapeHtml(service.description || "Sin descripción")}</span>
           </div>
           <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
-            <span class="service-price">$${Number(service.price).toLocaleString('es-CO')}</span>
+            <span class="service-price">$${formatPrice(service.price)}</span>
             <div style="display:flex; gap:6px;">
-              <button class="btn btn-primary btn-small edit-service-btn" style="padding:4px 8px; font-size:0.75rem;" data-id="${service.id}">Editar</button>
-              <button class="btn btn-danger btn-small toggle-service-btn" style="padding:4px 8px; font-size:0.75rem;" data-id="${service.id}" data-active="${service.active}">
-                ${service.active ? 'Desactivar' : 'Activar'}
+              <button class="btn btn-primary btn-small edit-service-btn" style="padding:4px 8px; font-size:0.75rem;" data-id="${escapeHtml(service.id)}">Editar</button>
+              <button class="btn btn-danger btn-small toggle-service-btn" style="padding:4px 8px; font-size:0.75rem;" data-id="${escapeHtml(service.id)}" data-active="${Boolean(service.active)}">
+                ${service.active ? "Desactivar" : "Activar"}
               </button>
-              <button class="btn btn-small delete-service-btn" style="padding:4px 8px; font-size:0.75rem; background:transparent; border:1px solid #ff4d4d; color:#ff4d4d;" data-id="${service.id}">
+              <button class="btn btn-small delete-service-btn" style="padding:4px 8px; font-size:0.75rem; background:transparent; border:1px solid #ff4d4d; color:#ff4d4d;" data-id="${escapeHtml(service.id)}">
                 Eliminar
               </button>
             </div>
           </div>
         `;
 
-        const btnToggle = item.querySelector(".toggle-service-btn");
-        btnToggle.addEventListener("click", () => toggleServiceActive(service.id, service.active));
-
-        const btnEdit = item.querySelector(".edit-service-btn");
-        btnEdit.addEventListener("click", () => editService(service));
-
-        const btnDelete = item.querySelector(".delete-service-btn");
-        btnDelete.addEventListener("click", () => deleteService(service.id));
+        item.querySelector(".toggle-service-btn").addEventListener("click", () => toggleServiceActive(service.id, service.active));
+        item.querySelector(".edit-service-btn").addEventListener("click", () => editService(service));
+        item.querySelector(".delete-service-btn").addEventListener("click", () => deleteService(service.id));
 
         listAdminServices.appendChild(item);
       });
-
     } catch (err) {
       console.error("Error cargando administración de servicios:", err.message);
       listAdminServices.innerHTML = "<p class='text-danger'>Error al conectar con la base de datos.</p>";
@@ -710,9 +676,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("service-name").value = service.name;
     document.getElementById("service-price").value = service.price;
     document.getElementById("service-duration").value = service.duration_minutes;
-    document.getElementById("service-desc").value = service.description || '';
+    document.getElementById("service-desc").value = service.description || "";
 
-    document.getElementById("btn-submit-service").innerText = "Actualizar Servicio";
+    document.getElementById("btn-submit-service").textContent = "Actualizar Servicio";
     document.getElementById("btn-cancel-service").style.display = "block";
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -733,7 +699,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnCancelService.addEventListener("click", () => {
       document.getElementById("service-id").value = "";
       formManageService.reset();
-      document.getElementById("btn-submit-service").innerText = "Crear Servicio";
+      document.getElementById("btn-submit-service").textContent = "Crear Servicio";
       btnCancelService.style.display = "none";
     });
   }
@@ -744,12 +710,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const btnSubmit = formManageService.querySelector("button[type='submit']");
       btnSubmit.setAttribute("disabled", "true");
-      btnSubmit.innerText = "Guardando...";
+      btnSubmit.textContent = "Guardando...";
 
       const serviceId = document.getElementById("service-id").value;
       const name = document.getElementById("service-name").value.trim();
       const price = parseFloat(document.getElementById("service-price").value);
-      const duration_minutes = parseInt(document.getElementById("service-duration").value);
+      const duration_minutes = parseInt(document.getElementById("service-duration").value, 10);
       const description = document.getElementById("service-desc").value.trim();
 
       try {
@@ -770,7 +736,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         formManageService.reset();
         document.getElementById("service-id").value = "";
-        document.getElementById("btn-submit-service").innerText = "Crear Servicio";
+        document.getElementById("btn-submit-service").textContent = "Crear Servicio";
         if (btnCancelService) btnCancelService.style.display = "none";
         loadAdminServices();
       } catch (err) {
@@ -778,7 +744,7 @@ document.addEventListener("DOMContentLoaded", () => {
         await showAlert("Error al guardar el servicio: " + err.message, "Error al Guardar", "alert-triangle");
       } finally {
         btnSubmit.removeAttribute("disabled");
-        btnSubmit.innerText = serviceId ? "Actualizar Servicio" : "Crear Servicio";
+        btnSubmit.textContent = document.getElementById("service-id").value ? "Actualizar Servicio" : "Crear Servicio";
       }
     });
   }
@@ -789,44 +755,44 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const { data: barbers, error } = await supabase.from("barbers").select("*").order("created_at", { ascending: false });
       if (error) throw error;
+
       listAdminBarbers.innerHTML = "";
       if (barbers.length === 0) {
         listAdminBarbers.innerHTML = "<p class='text-muted'>No hay barberos registrados.</p>";
         return;
       }
-      barbers.forEach(barber => {
+
+      barbers.forEach((barber) => {
         const item = document.createElement("div");
-        item.className = "service-item"; // Usamos el mismo estilo de card
+        item.className = "service-item";
         item.style.cursor = "default";
-        const specText = barber.specialties ? barber.specialties.join(", ") : "Sin especialidades";
-        const emailText = barber.login_email ? barber.login_email : "Sin correo vinculado";
+        const specText = Array.isArray(barber.specialties) && barber.specialties.length > 0
+          ? barber.specialties.join(", ")
+          : "Sin especialidades";
+        const emailText = barber.login_email || "Sin correo vinculado";
 
         item.innerHTML = `
           <div class="service-info">
-            <span class="service-name">${barber.name} ${!barber.active ? '<span class="text-danger">(Inactivo)</span>' : ''}</span>
-            <span class="service-meta" style="color:var(--primary); font-size:0.85rem; margin-bottom:4px;">${emailText}</span>
-            <span class="service-meta">${specText}</span>
+            <span class="service-name">${escapeHtml(barber.name)} ${!barber.active ? '<span class="text-danger">(Inactivo)</span>' : ""}</span>
+            <span class="service-meta" style="color:var(--primary); font-size:0.85rem; margin-bottom:4px;">${escapeHtml(emailText)}</span>
+            <span class="service-meta">${escapeHtml(specText)}</span>
           </div>
           <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px;">
-              <button class="btn btn-primary btn-small edit-barber-btn" style="padding:4px 8px; font-size:0.75rem;" data-id="${barber.id}">Editar</button>
-              <button class="btn btn-danger btn-small toggle-barber-btn" style="padding:4px 8px; font-size:0.75rem;" data-id="${barber.id}" data-active="${barber.active}">
-                ${barber.active ? 'Desactivar' : 'Activar'}
+              <button class="btn btn-primary btn-small edit-barber-btn" style="padding:4px 8px; font-size:0.75rem;" data-id="${escapeHtml(barber.id)}">Editar</button>
+              <button class="btn btn-danger btn-small toggle-barber-btn" style="padding:4px 8px; font-size:0.75rem;" data-id="${escapeHtml(barber.id)}" data-active="${Boolean(barber.active)}">
+                ${barber.active ? "Desactivar" : "Activar"}
               </button>
-              <button class="btn btn-small delete-barber-btn" style="padding:4px 8px; font-size:0.75rem; background:transparent; border:1px solid #ff4d4d; color:#ff4d4d;" data-id="${barber.id}">
+              <button class="btn btn-small delete-barber-btn" style="padding:4px 8px; font-size:0.75rem; background:transparent; border:1px solid #ff4d4d; color:#ff4d4d;" data-id="${escapeHtml(barber.id)}">
                 Eliminar
               </button>
             </div>
           </div>
         `;
-        const btnToggle = item.querySelector(".toggle-barber-btn");
-        btnToggle.addEventListener("click", () => toggleBarberActive(barber.id, barber.active));
 
-        const btnEdit = item.querySelector(".edit-barber-btn");
-        btnEdit.addEventListener("click", () => editBarber(barber));
-
-        const btnDelete = item.querySelector(".delete-barber-btn");
-        btnDelete.addEventListener("click", () => deleteBarber(barber.id));
+        item.querySelector(".toggle-barber-btn").addEventListener("click", () => toggleBarberActive(barber.id, barber.active));
+        item.querySelector(".edit-barber-btn").addEventListener("click", () => editBarber(barber));
+        item.querySelector(".delete-barber-btn").addEventListener("click", () => deleteBarber(barber.id));
 
         listAdminBarbers.appendChild(item);
       });
@@ -860,16 +826,15 @@ document.addEventListener("DOMContentLoaded", () => {
   function editBarber(barber) {
     document.getElementById("barber-id").value = barber.id;
     document.getElementById("barber-name").value = barber.name;
-    document.getElementById("barber-email").value = barber.login_email || '';
+    document.getElementById("barber-email").value = barber.login_email || "";
     document.getElementById("barber-specialties").value = barber.specialties ? barber.specialties.join(", ") : "";
-    document.getElementById("barber-bio").value = barber.bio || '';
+    document.getElementById("barber-bio").value = barber.bio || "";
 
-    // Deshabilitar credenciales para edición
     document.getElementById("barber-email").setAttribute("disabled", "true");
     document.getElementById("barber-password").setAttribute("disabled", "true");
     document.getElementById("barber-password").removeAttribute("required");
 
-    document.getElementById("btn-submit-barber").innerText = "Actualizar Barbero";
+    document.getElementById("btn-submit-barber").textContent = "Actualizar Barbero";
     document.getElementById("btn-cancel-barber").style.display = "block";
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -884,7 +849,7 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("barber-password").removeAttribute("disabled");
       document.getElementById("barber-password").setAttribute("required", "true");
 
-      document.getElementById("btn-submit-barber").innerText = "Crear Barbero";
+      document.getElementById("btn-submit-barber").textContent = "Crear Barbero";
       btnCancelBarber.style.display = "none";
     });
   }
@@ -894,24 +859,22 @@ document.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
       const btnSubmit = formManageBarber.querySelector("button[type='submit']");
       btnSubmit.setAttribute("disabled", "true");
-      btnSubmit.innerText = "Guardando...";
+      btnSubmit.textContent = "Guardando...";
 
       const barberId = document.getElementById("barber-id").value;
       const name = document.getElementById("barber-name").value.trim();
       const email = document.getElementById("barber-email").value.trim();
       const password = document.getElementById("barber-password").value;
       const specString = document.getElementById("barber-specialties").value.trim();
-      const specialties = specString ? specString.split(",").map(s => s.trim()) : [];
+      const specialties = specString ? specString.split(",").map((s) => s.trim()).filter(Boolean) : [];
       const bio = document.getElementById("barber-bio").value.trim();
 
       try {
         if (barberId) {
-          // Modo Edición
           const { error } = await supabase.from("barbers").update({ name, specialties, bio }).eq("id", barberId);
           if (error) throw new Error("Error al actualizar: " + error.message);
           await showAlert("Barbero actualizado exitosamente.", "Barbero Actualizado", "check-circle");
         } else {
-          // Modo Creación
           const tempClient = window.SupabaseLib.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
             auth: { persistSession: false }
           });
@@ -937,19 +900,17 @@ document.addEventListener("DOMContentLoaded", () => {
         formManageBarber.reset();
         document.getElementById("barber-id").value = "";
 
-        // Restaurar estado de inputs
         document.getElementById("barber-email").removeAttribute("disabled");
         document.getElementById("barber-password").removeAttribute("disabled");
         document.getElementById("barber-password").setAttribute("required", "true");
 
         if (btnCancelBarber) btnCancelBarber.style.display = "none";
-
         loadAdminBarbers();
       } catch (err) {
         await showAlert("Atención: " + err.message, "Atención", "alert-triangle");
       } finally {
         btnSubmit.removeAttribute("disabled");
-        btnSubmit.innerText = barberId ? "Actualizar Barbero" : "Crear Barbero";
+        btnSubmit.textContent = document.getElementById("barber-id").value ? "Actualizar Barbero" : "Crear Barbero";
       }
     });
   }
@@ -973,14 +934,16 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      galleryArray.forEach((url, index) => {
+      galleryArray.forEach((rawUrl, index) => {
+        const safeUrl = sanitizeUrl(rawUrl, "", { allowDataImage: true });
+        if (!safeUrl) return;
         const item = document.createElement("div");
         item.style.position = "relative";
         item.style.borderRadius = "8px";
         item.style.overflow = "hidden";
         item.style.border = "1px solid rgba(255,255,255,0.1)";
         item.innerHTML = `
-          <img src="${url}" style="width:100%; height:120px; object-fit:cover; display:block;">
+          <img src="${escapeHtml(safeUrl)}" style="width:100%; height:120px; object-fit:cover; display:block;">
           <button class="btn-delete-gallery" data-index="${index}" style="position:absolute; top:4px; right:4px; background:var(--danger); border:none; border-radius:50%; width:24px; height:24px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:white;">
             <i data-lucide="trash-2" style="width:14px; height:14px;"></i>
           </button>
@@ -988,10 +951,10 @@ document.addEventListener("DOMContentLoaded", () => {
         listAdminGallery.appendChild(item);
       });
 
-      document.querySelectorAll(".btn-delete-gallery").forEach(btn => {
+      document.querySelectorAll(".btn-delete-gallery").forEach((btn) => {
         btn.addEventListener("click", async (e) => {
           if (!await showConfirm("¿Eliminar esta foto de la galería pública?", "Eliminar Foto", "trash-2")) return;
-          const idx = e.currentTarget.dataset.index;
+          const idx = Number(e.currentTarget.dataset.index);
           galleryArray.splice(idx, 1);
           await saveGallerySettings();
         });
@@ -1023,24 +986,23 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!fileInput.files || fileInput.files.length === 0) return;
 
       const btnSubmit = formManageGallery.querySelector("button[type='submit']");
-      const originalText = btnSubmit.innerHTML;
+      const originalHtml = btnSubmit.innerHTML;
       btnSubmit.setAttribute("disabled", "true");
-      btnSubmit.innerText = "Subiendo...";
+      btnSubmit.textContent = "Subiendo...";
 
       try {
         const file = fileInput.files[0];
-        const fileExt = file.name.split('.').pop();
+        const fileExt = file.name.split(".").pop();
         const fileName = `gallery_${Date.now()}.${fileExt}`;
 
-        // Usamos el mismo bucket 'logos' para ahorrar configuración en Supabase
         const { error: uploadError } = await supabase.storage
-          .from('logos')
-          .upload(fileName, file, { cacheControl: '3600', upsert: true });
+          .from("logos")
+          .upload(fileName, file, { cacheControl: "3600", upsert: true });
 
         if (uploadError) throw uploadError;
 
-        const { data: urlData } = supabase.storage.from('logos').getPublicUrl(fileName);
-        galleryArray.unshift(urlData.publicUrl); // Insertamos al inicio de la matriz
+        const { data: urlData } = supabase.storage.from("logos").getPublicUrl(fileName);
+        galleryArray.unshift(urlData.publicUrl);
 
         await saveGallerySettings();
         formManageGallery.reset();
@@ -1048,7 +1010,7 @@ document.addEventListener("DOMContentLoaded", () => {
         await showAlert("Error al subir foto: " + err.message, "Error de Subida", "alert-triangle");
       } finally {
         btnSubmit.removeAttribute("disabled");
-        btnSubmit.innerHTML = originalText;
+        btnSubmit.innerHTML = originalHtml;
         if (window.lucide) window.lucide.createIcons();
       }
     });
@@ -1059,32 +1021,36 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const { data: settings, error } = await supabase.from("settings").select("*");
       if (error) throw error;
-      if (settings) {
-        settings.forEach(setting => {
-          if (setting.id === 'logo_url' && setting.value.trim() !== '') {
-            const previewImg = document.getElementById("logo-preview-img");
-            const previewText = document.getElementById("logo-preview-text");
-            if (previewImg && previewText) {
-              previewImg.src = setting.value;
-              previewImg.style.display = "block";
-              previewText.style.display = "none";
-            }
-          } else {
-            const el = document.getElementById(`set-${setting.id}`);
-            if (el) el.value = setting.value;
+      if (!settings) return;
+
+      settings.forEach((setting) => {
+        if (setting.id === "logo_url" && setting.value.trim() !== "") {
+          const previewImg = document.getElementById("logo-preview-img");
+          const previewText = document.getElementById("logo-preview-text");
+          const safeLogo = sanitizeUrl(setting.value, "", { allowDataImage: true });
+          if (previewImg && previewText && safeLogo) {
+            previewImg.src = safeLogo;
+            previewImg.style.display = "block";
+            previewText.style.display = "none";
           }
-        });
-      }
+        } else if (setting.id === "closed_days") {
+          const sundayCheck = document.getElementById("set-sunday_closed");
+          if (sundayCheck) {
+            const closed = parseClosedDays(setting.value);
+            sundayCheck.checked = closed.includes(0);
+          }
+        } else {
+          const el = document.getElementById(`set-${setting.id}`);
+          if (el) el.value = setting.value;
+        }
+      });
     } catch (err) {
       console.error("Error cargando config de inicio:", err.message);
     }
   }
 
   if (formManageHome) {
-
-    // --- Lógica de GPS ---
     const btnGetGps = document.getElementById("btn-get-gps");
-    console.log("GPS Button found:", btnGetGps);
     if (btnGetGps) {
       btnGetGps.addEventListener("click", async (e) => {
         e.preventDefault();
@@ -1098,24 +1064,26 @@ document.addEventListener("DOMContentLoaded", () => {
         btnGetGps.innerHTML = `<i data-lucide="loader" class="spin" style="width:18px; height:18px; display:inline-block; vertical-align:middle;"></i> ...`;
         if (window.lucide) window.lucide.createIcons();
 
-        navigator.geolocation.getCurrentPosition(async (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          const mapInput = document.getElementById("set-map_url");
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const mapInput = document.getElementById("set-map_url");
 
-          if (mapInput) {
-            // URL de embed de Google Maps con latitud y longitud
-            mapInput.value = `https://maps.google.com/maps?q=${lat},${lng}&hl=es&z=16&output=embed`;
-          }
+            if (mapInput) {
+              mapInput.value = `https://maps.google.com/maps?q=${lat},${lng}&hl=es&z=16&output=embed`;
+            }
 
-          btnGetGps.innerHTML = `<i data-lucide="check" style="stroke:#10B981; width:18px; height:18px; display:inline-block; vertical-align:middle;"></i> OK`;
-          if (window.lucide) window.lucide.createIcons();
-
-        }, async (err) => {
-          await showAlert("No se pudo obtener la ubicación: Permiso denegado o error (" + err.message + ")", "Error de GPS", "alert-triangle");
-          btnGetGps.innerHTML = `<i data-lucide="map-pin" style="width:18px; height:18px; display:inline-block; vertical-align:middle;"></i> Mi GPS`;
-          if (window.lucide) window.lucide.createIcons();
-        }, { enableHighAccuracy: true });
+            btnGetGps.innerHTML = `<i data-lucide="check" style="stroke:#10B981; width:18px; height:18px; display:inline-block; vertical-align:middle;"></i> OK`;
+            if (window.lucide) window.lucide.createIcons();
+          },
+          async (err) => {
+            await showAlert("No se pudo obtener la ubicación: Permiso denegado o error (" + err.message + ")", "Error de GPS", "alert-triangle");
+            btnGetGps.innerHTML = `<i data-lucide="map-pin" style="width:18px; height:18px; display:inline-block; vertical-align:middle;"></i> Mi GPS`;
+            if (window.lucide) window.lucide.createIcons();
+          },
+          { enableHighAccuracy: true }
+        );
       });
     }
 
@@ -1123,47 +1091,65 @@ document.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
       const btnSubmit = formManageHome.querySelector("button[type='submit']");
       btnSubmit.setAttribute("disabled", "true");
-      btnSubmit.innerText = "Guardando...";
+      btnSubmit.textContent = "Guardando...";
 
       const fileInput = document.getElementById("set-logo_file");
       let logoUrl = null;
 
       try {
-        // Si el usuario seleccionó una imagen nueva, la subimos primero
         if (fileInput && fileInput.files.length > 0) {
-          btnSubmit.innerText = "Subiendo imagen...";
+          btnSubmit.textContent = "Subiendo imagen...";
           const file = fileInput.files[0];
-          const fileExt = file.name.split('.').pop();
+          const fileExt = file.name.split(".").pop();
           const fileName = `logo_${Date.now()}.${fileExt}`;
 
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('logos')
-            .upload(fileName, file, { cacheControl: '3600', upsert: true });
+          const { error: uploadError } = await supabase.storage
+            .from("logos")
+            .upload(fileName, file, { cacheControl: "3600", upsert: true });
 
           if (uploadError) throw new Error("Error subiendo imagen a la nube: " + uploadError.message);
 
-          // Obtener el enlace público de la imagen recién subida
-          const { data: urlData } = supabase.storage.from('logos').getPublicUrl(fileName);
+          const { data: urlData } = supabase.storage.from("logos").getPublicUrl(fileName);
           logoUrl = urlData.publicUrl;
         }
 
-        const ids = ['hero_subtitle', 'hero_title', 'hero_desc', 'info_address', 'info_hours_wk', 'info_hours_we', 'social_whatsapp', 'social_instagram', 'facebook_url', 'map_url'];
-        const updates = ids.map(id => {
-          return { id: id, value: document.getElementById(`set-${id}`).value.trim() };
-        });
+        const ids = [
+          "hero_subtitle",
+          "hero_title",
+          "hero_desc",
+          "info_address",
+          "info_hours_wk",
+          "info_hours_we",
+          "social_whatsapp",
+          "social_instagram",
+          "facebook_url",
+          "map_url",
+          "schedule_start",
+          "schedule_end",
+          "schedule_interval"
+        ];
+        const updates = ids
+          .filter((id) => document.getElementById(`set-${id}`))
+          .map((id) => ({ id, value: document.getElementById(`set-${id}`).value.trim() }));
 
-        // Añadir el logo_url solo si subimos uno nuevo
+        const sundayCheck = document.getElementById("set-sunday_closed");
+        if (sundayCheck) {
+          updates.push({
+            id: "closed_days",
+            value: JSON.stringify(sundayCheck.checked ? [0] : [])
+          });
+        }
+
         if (logoUrl) {
           updates.push({ id: "logo_url", value: logoUrl });
         }
 
-        btnSubmit.innerText = "Guardando configuración...";
+        btnSubmit.textContent = "Guardando configuración...";
         const { error } = await supabase.from("settings").upsert(updates);
         if (error) throw error;
 
-        await showAlert("Textos e imagen guardados correctamente.", "Configuración Guardada", "check-circle");
+        await showAlert("Configuración guardada correctamente.", "Configuración Guardada", "check-circle");
 
-        // Actualizar la previsualización
         if (logoUrl) {
           const previewImg = document.getElementById("logo-preview-img");
           const previewText = document.getElementById("logo-preview-text");
@@ -1172,13 +1158,13 @@ document.addEventListener("DOMContentLoaded", () => {
             previewImg.style.display = "block";
             previewText.style.display = "none";
           }
-          fileInput.value = ""; // limpiar input
+          fileInput.value = "";
         }
       } catch (err) {
         await showAlert("Error guardando configuración: " + err.message, "Error al Guardar", "alert-triangle");
       } finally {
         btnSubmit.removeAttribute("disabled");
-        btnSubmit.innerText = "Guardar Textos";
+        btnSubmit.textContent = "Guardar Configuración";
       }
     });
   }
@@ -1212,14 +1198,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (!reportBarberSelect || !reportPeriodSelect || !reportCustomDates || !btnGenerateReport) return;
 
-    // Solo agregar event listeners una vez
     if (!isReportsTabInitialized) {
       reportPeriodSelect.addEventListener("change", (e) => {
-        if (e.target.value === "custom") {
-          reportCustomDates.style.display = "grid";
-        } else {
-          reportCustomDates.style.display = "none";
-        }
+        reportCustomDates.style.display = e.target.value === "custom" ? "grid" : "none";
       });
 
       btnGenerateReport.addEventListener("click", (e) => {
@@ -1230,12 +1211,10 @@ document.addEventListener("DOMContentLoaded", () => {
       isReportsTabInitialized = true;
     }
 
-    // Inicializar fechas del rango personalizado con el día de hoy
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayStr = getLocalDateStr();
     document.getElementById("report-start-date").value = todayStr;
     document.getElementById("report-end-date").value = todayStr;
 
-    // Cargar barberos activos en el select dinámico
     try {
       const { data: barbers, error } = await supabase
         .from("barbers")
@@ -1244,13 +1223,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (error) throw error;
 
-      // Limpiar opciones previas manteniendo "Todos los Barberos"
       reportBarberSelect.innerHTML = `<option value="all">Todos los Barberos</option>`;
       if (barbers) {
-        barbers.forEach(barber => {
+        barbers.forEach((barber) => {
           const opt = document.createElement("option");
           opt.value = barber.id;
-          opt.innerText = barber.name;
+          opt.textContent = barber.name;
           reportBarberSelect.appendChild(opt);
         });
       }
@@ -1258,7 +1236,6 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("Error cargando barberos para reportes:", err.message);
     }
 
-    // Generar reporte inicial ("Hoy") automáticamente al entrar a la pestaña
     generateReport();
   }
 
@@ -1280,42 +1257,38 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!statCount || !statCompleted || !statCancelled || !statEarnings || !statAttendance || !tableBody || !detailsContainer || !detailsList) return;
 
     btnSubmit.setAttribute("disabled", "true");
-    const originalText = btnSubmit.innerHTML;
+    const originalHtml = btnSubmit.innerHTML;
     btnSubmit.innerHTML = `<i data-lucide="loader" class="spin" style="width:16px; height:16px; display:inline-block; vertical-align:middle; margin-right:4px;"></i> Generando...`;
     if (window.lucide) window.lucide.createIcons();
 
-    // Calcular fechas startDate y endDate
     let startDate = "";
     let endDate = "";
     const today = new Date();
+    const todayStr = getLocalDateStr(today);
 
     if (period === "today") {
-      const todayStr = today.toISOString().split("T")[0];
       startDate = todayStr;
       endDate = todayStr;
     } else if (period === "week") {
-      const lastWeek = new Date();
-      lastWeek.setDate(today.getDate() - 7);
-      startDate = lastWeek.toISOString().split("T")[0];
-      endDate = today.toISOString().split("T")[0];
+      startDate = getLocalDateOffset(-7);
+      endDate = todayStr;
     } else if (period === "month") {
       const year = today.getFullYear();
-      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const month = String(today.getMonth() + 1).padStart(2, "0");
       startDate = `${year}-${month}-01`;
-      endDate = today.toISOString().split("T")[0];
+      endDate = todayStr;
     } else if (period === "custom") {
       startDate = document.getElementById("report-start-date").value;
       endDate = document.getElementById("report-end-date").value;
       if (!startDate || !endDate) {
         await showAlert("Por favor ingresa ambas fechas para el rango personalizado.", "Rango de Fechas Requerido", "info");
         btnSubmit.removeAttribute("disabled");
-        btnSubmit.innerHTML = originalText;
+        btnSubmit.innerHTML = originalHtml;
         return;
       }
     }
 
     try {
-      // Consultar citas en el rango
       let query = supabase
         .from("appointments")
         .select(`
@@ -1326,7 +1299,6 @@ document.addEventListener("DOMContentLoaded", () => {
         .gte("appointment_date", startDate)
         .lte("appointment_date", endDate);
 
-      // Si se filtra por un barbero específico
       if (barberId !== "all") {
         query = query.eq("barber_id", barberId);
       }
@@ -1334,24 +1306,18 @@ document.addEventListener("DOMContentLoaded", () => {
       const { data: appointments, error } = await query;
       if (error) throw error;
 
-      // Variables generales de conteo
-      let totalCitas = appointments.length;
+      const totalCitas = appointments.length;
       let completadasCount = 0;
       let canceladasCount = 0;
-      let agendadasCount = 0;
       let totalRecaudado = 0;
 
-      // Estructura para agrupar por barbero
       const barberStats = {};
-
-      // Primero, poblar la lista de barberos del select
       const barberOptions = Array.from(document.getElementById("report-barber").options);
-      barberOptions.forEach(opt => {
+      barberOptions.forEach((opt) => {
         if (opt.value !== "all") {
           if (barberId !== "all" && opt.value !== barberId) return;
-
           barberStats[opt.value] = {
-            name: opt.innerText,
+            name: opt.textContent,
             completed: 0,
             cancelled: 0,
             scheduled: 0,
@@ -1360,8 +1326,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       });
 
-      // Procesar citas
-      appointments.forEach(app => {
+      appointments.forEach((app) => {
         const appBarberId = app.barber_id;
         const appStatus = app.status;
         const price = app.services ? parseFloat(app.services.price) : 0;
@@ -1389,25 +1354,21 @@ document.addEventListener("DOMContentLoaded", () => {
           canceladasCount++;
           if (statsObj) statsObj.cancelled++;
         } else {
-          agendadasCount++;
           if (statsObj) statsObj.scheduled++;
         }
       });
 
-      // Actualizar KPIs
-      statCount.innerText = totalCitas;
-      statCompleted.innerText = completadasCount;
-      statCancelled.innerText = canceladasCount;
-      statEarnings.innerText = `$${Number(totalRecaudado).toLocaleString('es-CO')}`;
+      statCount.textContent = totalCitas;
+      statCompleted.textContent = completadasCount;
+      statCancelled.textContent = canceladasCount;
+      statEarnings.textContent = `$${formatPrice(totalRecaudado)}`;
 
-      // Calcular tasa de asistencia
       const totalFinalizadas = completadasCount + canceladasCount;
       const attendancePercent = totalFinalizadas > 0
         ? Math.round((completadasCount / totalFinalizadas) * 100)
         : 0;
-      statAttendance.innerText = `${attendancePercent}%`;
+      statAttendance.textContent = `${attendancePercent}%`;
 
-      // Renderizar tabla
       tableBody.innerHTML = "";
 
       let grandTotalCompleted = 0;
@@ -1415,7 +1376,7 @@ document.addEventListener("DOMContentLoaded", () => {
       let grandTotalScheduled = 0;
       let grandTotalEarnings = 0;
 
-      Object.keys(barberStats).forEach(bId => {
+      Object.keys(barberStats).forEach((bId) => {
         const stats = barberStats[bId];
         const row = document.createElement("tr");
 
@@ -1425,11 +1386,11 @@ document.addEventListener("DOMContentLoaded", () => {
         grandTotalEarnings += stats.totalEarnings;
 
         row.innerHTML = `
-          <td data-label="Barbero" style="padding: 12px 8px; font-weight: 500;">${stats.name}</td>
+          <td data-label="Barbero" style="padding: 12px 8px; font-weight: 500;">${escapeHtml(stats.name)}</td>
           <td data-label="Completadas" style="padding: 12px 8px; text-align: center;">${stats.completed}</td>
-          <td data-label="Canceladas" style="padding: 12px 8px; text-align: center; color: ${stats.cancelled > 0 ? 'var(--danger)' : 'var(--text-secondary)'};">${stats.cancelled}</td>
-          <td data-label="Agendadas" style="padding: 12px 8px; text-align: center; color: ${stats.scheduled > 0 ? 'var(--primary)' : 'var(--text-secondary)'};">${stats.scheduled}</td>
-          <td data-label="Total Producido" style="padding: 12px 8px; text-align: right; font-weight: 600; color: var(--primary);">$${Number(stats.totalEarnings).toLocaleString('es-CO')}</td>
+          <td data-label="Canceladas" style="padding: 12px 8px; text-align: center; color: ${stats.cancelled > 0 ? "var(--danger)" : "var(--text-secondary)"};">${stats.cancelled}</td>
+          <td data-label="Agendadas" style="padding: 12px 8px; text-align: center; color: ${stats.scheduled > 0 ? "var(--primary)" : "var(--text-secondary)"};">${stats.scheduled}</td>
+          <td data-label="Total Producido" style="padding: 12px 8px; text-align: right; font-weight: 600; color: var(--primary);">$${formatPrice(stats.totalEarnings)}</td>
         `;
         tableBody.appendChild(row);
       });
@@ -1442,7 +1403,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <td data-label="Completadas" style="padding: 14px 8px; text-align: center; color: var(--success);">${grandTotalCompleted}</td>
           <td data-label="Canceladas" style="padding: 14px 8px; text-align: center; color: var(--danger);">${grandTotalCancelled}</td>
           <td data-label="Agendadas" style="padding: 14px 8px; text-align: center; color: var(--primary);">${grandTotalScheduled}</td>
-          <td data-label="Total Producido" style="padding: 14px 8px; text-align: right; color: var(--primary);">$${Number(grandTotalEarnings).toLocaleString('es-CO')}</td>
+          <td data-label="Total Producido" style="padding: 14px 8px; text-align: right; color: var(--primary);">$${formatPrice(grandTotalEarnings)}</td>
         `;
         tableBody.appendChild(tfoot);
       }
@@ -1451,9 +1412,8 @@ document.addEventListener("DOMContentLoaded", () => {
         tableBody.innerHTML = `<tr><td colspan="5" class="text-muted" style="text-align: center; padding: 20px;">No hay datos de barberos para mostrar.</td></tr>`;
       }
 
-      // Renderizar listado de detalles (si se elige un barbero específico)
       if (barberId !== "all") {
-        tableTitle.innerText = "Resumen del Barbero";
+        tableTitle.textContent = "Resumen del Barbero";
         detailsContainer.style.display = "block";
         detailsList.innerHTML = "";
 
@@ -1466,59 +1426,27 @@ document.addEventListener("DOMContentLoaded", () => {
             return dateB - dateA;
           });
 
-          appointments.forEach(app => {
-            const rowItem = document.createElement("div");
-            rowItem.className = `appointment-list-item ${app.status}`;
-
-            const price = app.services ? parseFloat(app.services.price) : 0;
-            const formattedPrice = Number(price).toLocaleString('es-CO');
-            const serviceName = app.services ? app.services.name : "Servicio Desconocido";
-            const rawDate = new Date(app.appointment_date + "T00:00:00");
-            const formattedDate = rawDate.toLocaleDateString("es-ES", { day: 'numeric', month: 'short', year: 'numeric' });
-            const formattedTime = app.appointment_time.slice(0, 5);
-
-            let statusText = "Confirmado";
-            let statusClass = "status-scheduled";
-            if (app.status === "pending") {
-              statusText = "Por Confirmar";
-              statusClass = "status-pending";
-            } else if (app.status === "completed") {
-              statusText = "Completado";
-              statusClass = "status-completed";
-            } else if (app.status === "cancelled") {
-              statusText = "Cancelado";
-              statusClass = "status-cancelled";
-            }
-
-            rowItem.innerHTML = `
-              <div class="appointment-header">
-                <span class="appointment-time-tag" style="background: rgba(255,255,255,0.05); color:#fff; font-size:0.8rem; padding:4px 8px; border-radius:4px;">
-                  ${formattedDate} • ${formattedTime} hs
-                </span>
-                <span class="appointment-status-tag ${statusClass}">${statusText}</span>
-              </div>
-              <div class="appointment-details" style="margin-top: 10px;">
-                <p><strong>Cliente:</strong> ${app.client_name} (${app.client_phone})</p>
-                ${app.client_email ? `<p><strong>Email:</strong> ${app.client_email}</p>` : ''}
-                <p><strong>Servicio:</strong> ${serviceName} ($${formattedPrice})</p>
-              </div>
-            `;
-            detailsList.appendChild(rowItem);
+          appointments.forEach((app) => {
+            const card = renderAppointmentCard(app, {
+              showDate: true,
+              highlightPending: false,
+              showActions: false,
+              showBarber: false
+            });
+            detailsList.appendChild(card);
           });
         }
       } else {
-        tableTitle.innerText = "Desglose de Producción";
+        tableTitle.textContent = "Desglose de Producción";
         detailsContainer.style.display = "none";
       }
-
     } catch (err) {
       console.error("Error al generar reporte:", err.message);
       await showAlert("Error al cargar datos del reporte: " + err.message, "Error de Reporte", "alert-triangle");
     } finally {
       btnSubmit.removeAttribute("disabled");
-      btnSubmit.innerHTML = originalText;
+      btnSubmit.innerHTML = originalHtml;
       if (window.lucide) window.lucide.createIcons();
     }
   }
-
 });

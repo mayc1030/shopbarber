@@ -3,16 +3,38 @@
 // =========================================================================
 
 document.addEventListener("DOMContentLoaded", () => {
-  // --- Inicialización y Estado de la Cita ---
+  const {
+    escapeHtml,
+    sanitizeUrl,
+    getLocalDateStr,
+    timeToMinutes,
+    minutesToTime,
+    formatPrice,
+    parseClosedDays
+  } = window.AppUtils;
+
+  // --- Estado de la Cita y Configuración de Horarios ---
   const bookingState = {
     serviceId: null,
     serviceName: "",
     servicePrice: 0,
+    serviceDuration: 30,
     barberId: null,
     barberName: "",
     selectedDate: "",
     selectedTime: ""
   };
+
+  const scheduleConfig = {
+    start: "09:00",
+    end: "18:00",
+    interval: 30,
+    closedDays: [0]
+  };
+
+  let servicesCache = null;
+  let barbersCache = null;
+  let isCustomDateListenerBound = false;
 
   // --- Elementos del DOM ---
   const viewHome = document.getElementById("home-view");
@@ -29,7 +51,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const barbersContainer = document.getElementById("barbers-container");
   const dateScrollContainer = document.getElementById("date-scroll-container");
   const timeGridContainer = document.getElementById("time-grid-container");
-  
+
   const formClient = document.getElementById("booking-client-form");
   const summaryDetails = document.getElementById("summary-details");
   const confirmationDetails = document.getElementById("confirmation-details");
@@ -52,7 +74,7 @@ document.addEventListener("DOMContentLoaded", () => {
       gallery: viewGallery,
       info: viewInfo
     };
-    
+
     const navs = {
       home: navHome,
       booking: navBooking,
@@ -60,17 +82,15 @@ document.addEventListener("DOMContentLoaded", () => {
       info: navInfo
     };
 
-    // Ocultar todos
-    Object.values(views).forEach(v => { if(v) v.classList.remove("active"); });
-    Object.values(navs).forEach(n => { if(n) n.classList.remove("active"); });
-    
+    Object.values(views).forEach((v) => { if (v) v.classList.remove("active"); });
+    Object.values(navs).forEach((n) => { if (n) n.classList.remove("active"); });
+
     const barberProfileView = document.getElementById("barber-profile-view");
     if (barberProfileView) barberProfileView.classList.remove("active");
 
-    // Mostrar el solicitado
     if (views[viewName]) views[viewName].classList.add("active");
     if (navs[viewName]) navs[viewName].classList.add("active");
-    
+
     window.location.hash = "#" + viewName;
   }
 
@@ -100,98 +120,155 @@ document.addEventListener("DOMContentLoaded", () => {
       if (navAdmin) {
         navAdmin.style.display = (data && data.session) ? "flex" : "none";
       }
-    } catch (e) {}
+    } catch (_) {}
   }
   checkAdminMenu();
+
+  // --- Actualizar botón "Cómo Llegar" ---
+  function updateDirectionsLink(mapUrl, address) {
+    const btnDirections = document.getElementById("btn-how-to-get-there");
+    if (!btnDirections) return;
+
+    let targetHref = "";
+    if (mapUrl) {
+      try {
+        const parsed = new URL(mapUrl);
+        const queryParam = parsed.searchParams.get("q");
+        if (queryParam) {
+          targetHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(queryParam)}`;
+        } else {
+          targetHref = sanitizeUrl(mapUrl, "");
+        }
+      } catch (_) {}
+    }
+
+    if (!targetHref && address) {
+      targetHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+    }
+
+    if (targetHref) {
+      btnDirections.href = targetHref;
+    }
+  }
 
   // --- Cargar configuraciones del Home dinámicamente ---
   async function loadHomeSettings() {
     try {
       const { data: settings, error } = await supabase.from("settings").select("*");
       if (error) throw error;
-      if (settings && settings.length > 0) {
-        let hasSocialLinks = false;
-        settings.forEach(setting => {
-          if (setting.id === 'social_whatsapp') {
-            window.shopWhatsappNumber = setting.value.trim();
-          }
-          if (setting.id.startsWith("social_")) {
-            const network = setting.id.replace("social_", "");
-            const linkEl = document.getElementById(`link-${network}`);
-            if (linkEl && setting.value.trim() !== '') {
-              let url = setting.value.trim();
-              if (!url.startsWith('http')) url = 'https://' + url;
-              linkEl.href = url;
+      if (!settings || settings.length === 0) return;
+
+      let hasSocialLinks = false;
+      let loadedMapUrl = "";
+      let loadedAddress = "";
+
+      settings.forEach((setting) => {
+        const val = (setting.value || "").trim();
+
+        if (setting.id === "social_whatsapp") {
+          window.shopWhatsappNumber = val;
+        }
+
+        if (setting.id === "schedule_start" && /^\d{2}:\d{2}$/.test(val)) {
+          scheduleConfig.start = val;
+        } else if (setting.id === "schedule_end" && /^\d{2}:\d{2}$/.test(val)) {
+          scheduleConfig.end = val;
+        } else if (setting.id === "schedule_interval") {
+          const parsedInt = parseInt(val, 10);
+          if (parsedInt >= 10 && parsedInt <= 120) scheduleConfig.interval = parsedInt;
+        } else if (setting.id === "closed_days") {
+          scheduleConfig.closedDays = parseClosedDays(val);
+        } else if (setting.id.startsWith("social_")) {
+          const network = setting.id.replace("social_", "");
+          const linkEl = document.getElementById(`link-${network}`);
+          if (linkEl && val !== "") {
+            const safeHref = network === "whatsapp"
+              ? `https://wa.me/${val.replace(/\D/g, "")}`
+              : sanitizeUrl(val, "");
+            if (safeHref && safeHref !== "https://wa.me/") {
+              linkEl.href = safeHref;
               linkEl.style.display = "flex";
               hasSocialLinks = true;
             }
-          } else if (setting.id === "facebook_url") {
-            const linkEl = document.getElementById("link-facebook");
-            if (linkEl && setting.value.trim() !== '') {
-              let url = setting.value.trim();
-              if (!url.startsWith('http')) url = 'https://' + url;
-              linkEl.href = url;
+          }
+        } else if (setting.id === "facebook_url") {
+          const linkEl = document.getElementById("link-facebook");
+          if (linkEl && val !== "") {
+            const safeHref = sanitizeUrl(val, "");
+            if (safeHref) {
+              linkEl.href = safeHref;
               linkEl.style.display = "flex";
               hasSocialLinks = true;
             }
-          } else if (setting.id === 'map_url') {
-            const mapIframe = document.getElementById("map-iframe");
-            if (mapIframe && setting.value.trim() !== '') {
-              mapIframe.src = setting.value.trim();
+          }
+        } else if (setting.id === "map_url") {
+          loadedMapUrl = val;
+          const mapIframe = document.getElementById("map-iframe");
+          const safeMapUrl = sanitizeUrl(val, "");
+          if (mapIframe && safeMapUrl) {
+            mapIframe.src = safeMapUrl;
+          }
+        } else if (setting.id === "logo_url") {
+          const logoContainer = document.getElementById("dyn-logo-container");
+          const safeLogo = sanitizeUrl(val, "", { allowDataImage: true });
+          if (logoContainer && safeLogo) {
+            logoContainer.innerHTML = "";
+            const img = document.createElement("img");
+            img.src = safeLogo;
+            img.alt = "Logo";
+            img.style.cssText = "max-height: 45px; width: auto; object-fit: contain;";
+            logoContainer.appendChild(img);
+          }
+        } else if (setting.id === "gallery_images") {
+          const dynGallery = document.getElementById("dyn-gallery-container");
+          if (dynGallery && val) {
+            let urls = [];
+            try { urls = JSON.parse(val); } catch (_) { urls = []; }
+            dynGallery.innerHTML = "";
+            if (!Array.isArray(urls) || urls.length === 0) {
+              dynGallery.innerHTML = "<p class='text-muted' style='grid-column: 1 / -1; text-align: center;'>No hay fotos publicadas en el portafolio.</p>";
+            } else {
+              urls.forEach((rawUrl) => {
+                const safeImgUrl = sanitizeUrl(rawUrl, "", { allowDataImage: true });
+                if (!safeImgUrl) return;
+                const img = document.createElement("img");
+                img.src = safeImgUrl;
+                img.alt = "Trabajo de barbería";
+                img.style.width = "100%";
+                img.style.height = "150px";
+                img.style.objectFit = "cover";
+                img.style.borderRadius = "8px";
+                dynGallery.appendChild(img);
+              });
             }
-          } else if (setting.id === 'logo_url') {
-            const logoContainer = document.getElementById('dyn-logo-container');
-            if (logoContainer && setting.value.trim() !== '') {
-              // Aumentamos el tamaño máximo para que el logo se vea bien en celular y desktop
-              logoContainer.innerHTML = `<img src="${setting.value}" alt="Logo" style="max-height: 45px; width: auto; object-fit: contain;">`;
-            }
-          } else if (setting.id === 'gallery_images') {
-            const dynGallery = document.getElementById("dyn-gallery-container");
-            if (dynGallery && setting.value) {
-              const urls = JSON.parse(setting.value);
-              dynGallery.innerHTML = "";
-              if (urls.length === 0) {
-                dynGallery.innerHTML = "<p class='text-muted' style='grid-column: 1 / -1; text-align: center;'>No hay fotos publicadas en el portafolio.</p>";
-              } else {
-                urls.forEach(url => {
-                  const img = document.createElement("img");
-                  img.src = url;
-                  img.style.width = "100%";
-                  img.style.height = "150px";
-                  img.style.objectFit = "cover";
-                  img.style.borderRadius = "8px";
-                  dynGallery.appendChild(img);
-                });
-              }
-              if (typeof window.refreshGalleryLightbox === "function") {
-                window.refreshGalleryLightbox();
-              }
-            }
-          } else {
-            const el = document.getElementById(`dyn-${setting.id}`);
-            if (el) {
-              el.innerHTML = setting.value;
+            if (typeof window.refreshGalleryLightbox === "function") {
+              window.refreshGalleryLightbox();
             }
           }
-        });
-
-        // Si la galería no existe aún en la base de datos, limpiamos el mensaje de "Cargando..."
-        const dynGallery = document.getElementById("dyn-gallery-container");
-        if (dynGallery && dynGallery.innerHTML.includes("Cargando portafolio...")) {
-          dynGallery.innerHTML = "<p class='text-muted' style='grid-column: 1 / -1; text-align: center;'>No hay fotos publicadas en el portafolio.</p>";
+        } else {
+          if (setting.id === "info_address") loadedAddress = val;
+          const el = document.getElementById(`dyn-${setting.id}`);
+          if (el) {
+            el.textContent = setting.value;
+          }
         }
+      });
 
-        if (hasSocialLinks) {
-          const socialCard = document.getElementById("social-media-card");
-          if (socialCard) socialCard.style.display = "block";
-        }
+      updateDirectionsLink(loadedMapUrl, loadedAddress);
+
+      const dynGallery = document.getElementById("dyn-gallery-container");
+      if (dynGallery && dynGallery.innerHTML.includes("Cargando portafolio...")) {
+        dynGallery.innerHTML = "<p class='text-muted' style='grid-column: 1 / -1; text-align: center;'>No hay fotos publicadas en el portafolio.</p>";
+      }
+
+      if (hasSocialLinks) {
+        const socialCard = document.getElementById("social-media-card");
+        if (socialCard) socialCard.style.display = "block";
       }
     } catch (err) {
       console.error("Error cargando configuraciones del Home:", err.message);
     }
   }
-  
-  // loadHomeSettings() se llamará dentro del inicializador initApp() al final del archivo.
 
   // --- Cargar Equipo (Barberos) ---
   async function loadTeam() {
@@ -200,68 +277,71 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const { data: barbers, error } = await supabase.from("barbers").select("*").eq("active", true);
       if (error) throw error;
-      
-      if (barbers.length === 0) {
+
+      barbersCache = barbers || [];
+
+      if (barbersCache.length === 0) {
         teamContainer.innerHTML = "<p class='text-muted'>No hay barberos registrados.</p>";
         return;
       }
-      
+
       teamContainer.innerHTML = "";
-      barbers.forEach(barber => {
-        const specText = barber.specialties ? barber.specialties.join(" • ") : "Estilista";
-        const avatarHtml = barber.photo_url 
-          ? `<img src="${barber.photo_url}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;">` 
+      barbersCache.forEach((barber) => {
+        const specText = Array.isArray(barber.specialties) && barber.specialties.length > 0
+          ? barber.specialties.join(" • ")
+          : "Estilista";
+        const safePhoto = sanitizeUrl(barber.photo_url, "", { allowDataImage: true });
+        const avatarHtml = safePhoto
+          ? `<img src="${escapeHtml(safePhoto)}" alt="${escapeHtml(barber.name)}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;">`
           : `<i data-lucide="user" style="stroke:var(--primary); width:20px; height:20px;"></i>`;
-          
+
         const barberCard = document.createElement("div");
         barberCard.style.cssText = "display:flex; align-items:center; gap:12px; background:var(--bg-surface); padding:12px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); cursor:pointer; transition: transform 0.2s, background 0.2s;";
-        barberCard.onmouseover = () => barberCard.style.background = "var(--bg-surface-elevated)";
-        barberCard.onmouseout = () => barberCard.style.background = "var(--bg-surface)";
-        
+        barberCard.onmouseover = () => { barberCard.style.background = "var(--bg-surface-elevated)"; };
+        barberCard.onmouseout = () => { barberCard.style.background = "var(--bg-surface)"; };
+
         barberCard.innerHTML = `
-            <div style="width:40px; height:40px; border-radius:50%; background:var(--bg-surface-elevated); display:flex; align-items:center; justify-content:center; overflow:hidden;">
-              ${avatarHtml}
-            </div>
-            <div>
-              <div style="font-weight:600; color:var(--text-primary);">${barber.name}</div>
-              <div style="font-size:0.8rem; color:var(--primary);">${specText}</div>
-            </div>
+          <div style="width:40px; height:40px; border-radius:50%; background:var(--bg-surface-elevated); display:flex; align-items:center; justify-content:center; overflow:hidden;">
+            ${avatarHtml}
+          </div>
+          <div>
+            <div style="font-weight:600; color:var(--text-primary);">${escapeHtml(barber.name)}</div>
+            <div style="font-size:0.8rem; color:var(--primary);">${escapeHtml(specText)}</div>
+          </div>
         `;
-        
+
         barberCard.addEventListener("click", () => showBarberProfile(barber));
         teamContainer.appendChild(barberCard);
       });
 
-      // Lógica de Perfil Público de Barbero
-      function showBarberProfile(barber) {
-        document.getElementById("bp-name").innerText = barber.name;
-        document.getElementById("bp-specialties").innerText = barber.specialties ? barber.specialties.join(" • ") : "Estilista";
-        document.getElementById("bp-bio").innerText = barber.bio || "Biografía no disponible.";
-        
-        const photoEl = document.getElementById("bp-photo");
-        if (barber.photo_url) {
-          photoEl.src = barber.photo_url;
-          photoEl.style.display = "inline-block";
-        } else {
-          // Fallback
-          photoEl.src = "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=150&auto=format&fit=crop&q=80";
-        }
+      if (window.lucide) window.lucide.createIcons();
 
-        // En lugar de style.display o override, simularemos un cambio de vista
-        // Ocultar la de info y mostrar la de perfil, limpiando estilos inline si los hay
-        document.querySelectorAll(".app-view").forEach(v => {
+      function showBarberProfile(barber) {
+        document.getElementById("bp-name").textContent = barber.name || "";
+        document.getElementById("bp-specialties").textContent = Array.isArray(barber.specialties) && barber.specialties.length > 0
+          ? barber.specialties.join(" • ")
+          : "Estilista";
+        document.getElementById("bp-bio").textContent = barber.bio || "Biografía no disponible.";
+
+        const photoEl = document.getElementById("bp-photo");
+        const base = window.SITE_BASEURL || "";
+        const safePhoto = sanitizeUrl(barber.photo_url, `${base}/assets/img/barber.png`, { allowDataImage: true });
+        photoEl.src = safePhoto;
+        photoEl.style.display = "inline-block";
+
+        document.querySelectorAll(".app-view").forEach((v) => {
           v.style.display = "";
           v.classList.remove("active");
         });
         document.getElementById("barber-profile-view").classList.add("active");
-        
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
 
       const btnBackProfile = document.getElementById("btn-back-barber-profile");
-      if (btnBackProfile) {
+      if (btnBackProfile && !btnBackProfile.dataset.bound) {
+        btnBackProfile.dataset.bound = "1";
         btnBackProfile.addEventListener("click", () => {
-          document.querySelectorAll(".app-view").forEach(v => {
+          document.querySelectorAll(".app-view").forEach((v) => {
             v.style.display = "";
             v.classList.remove("active");
           });
@@ -269,52 +349,54 @@ document.addEventListener("DOMContentLoaded", () => {
           window.scrollTo({ top: 0, behavior: "smooth" });
         });
       }
-
     } catch (err) {
       console.error("Error cargando equipo:", err.message);
     }
   }
-  // loadTeam() se llamará dentro del inicializador initApp() al final del archivo.
 
   // --- 2. Carga de Datos desde Supabase (Reservas) ---
-  async function loadServices() {
+  async function loadServices(forceRefresh = false) {
     try {
-      const { data: services, error } = await supabase
-        .from("services")
-        .select("*")
-        .eq("active", true);
-
-      if (error) throw error;
+      if (!servicesCache || forceRefresh) {
+        const { data: services, error } = await supabase
+          .from("services")
+          .select("*")
+          .eq("active", true);
+        if (error) throw error;
+        servicesCache = services || [];
+      }
 
       servicesContainer.innerHTML = "";
-      if (services.length === 0) {
+      if (servicesCache.length === 0) {
         servicesContainer.innerHTML = "<p class='text-muted'>No hay servicios disponibles.</p>";
         return;
       }
 
-      services.forEach(service => {
+      servicesCache.forEach((service) => {
         const item = document.createElement("div");
         item.className = "service-item";
+        if (String(bookingState.serviceId) === String(service.id)) {
+          item.classList.add("selected");
+        }
         item.dataset.id = service.id;
-        item.dataset.name = service.name;
-        item.dataset.price = service.price;
-        
+
         item.innerHTML = `
           <div class="service-info">
-            <span class="service-name">${service.name}</span>
-            <span class="service-meta">${service.duration_minutes} min • ${service.description || ''}</span>
+            <span class="service-name">${escapeHtml(service.name)}</span>
+            <span class="service-meta">${Number(service.duration_minutes) || 30} min • ${escapeHtml(service.description || "")}</span>
           </div>
-          <span class="service-price">$${Number(service.price).toLocaleString('es-CO')}</span>
+          <span class="service-price">$${formatPrice(service.price)}</span>
         `;
-        
+
         item.addEventListener("click", () => {
-          document.querySelectorAll(".service-item").forEach(i => i.classList.remove("selected"));
+          document.querySelectorAll(".service-item").forEach((i) => i.classList.remove("selected"));
           item.classList.add("selected");
           bookingState.serviceId = service.id;
           bookingState.serviceName = service.name;
           bookingState.servicePrice = service.price;
-          
-          // Habilitar avance
+          bookingState.serviceDuration = Number(service.duration_minutes) || 30;
+          bookingState.selectedTime = "";
+          document.getElementById("btn-to-step4").setAttribute("disabled", "true");
           document.getElementById("btn-to-step2").removeAttribute("disabled");
         });
 
@@ -326,46 +408,56 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  async function loadBarbers() {
+  async function loadBarbers(forceRefresh = false) {
     try {
-      const { data: barbers, error } = await supabase
-        .from("barbers")
-        .select("*")
-        .eq("active", true);
-
-      if (error) throw error;
+      if (!barbersCache || forceRefresh) {
+        const { data: barbers, error } = await supabase
+          .from("barbers")
+          .select("*")
+          .eq("active", true);
+        if (error) throw error;
+        barbersCache = barbers || [];
+      }
 
       barbersContainer.innerHTML = "";
-      if (barbers.length === 0) {
+      if (barbersCache.length === 0) {
         barbersContainer.innerHTML = "<p class='text-muted'>No hay barberos disponibles.</p>";
         return;
       }
 
-      barbers.forEach(barber => {
+      const base = window.SITE_BASEURL || "";
+      const defaultAvatar = `${base}/assets/img/barber.png`;
+
+      barbersCache.forEach((barber) => {
         const item = document.createElement("div");
         item.className = "barber-item";
+        if (String(bookingState.barberId) === String(barber.id)) {
+          item.classList.add("selected");
+        }
         item.dataset.id = barber.id;
-        item.dataset.name = barber.name;
 
-        const defaultAvatar = "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=150&auto=format&fit=crop&q=80";
-        const specialtiesList = barber.specialties ? barber.specialties.join(", ") : "Cortes en general";
+        const specialtiesList = Array.isArray(barber.specialties) && barber.specialties.length > 0
+          ? barber.specialties.join(", ")
+          : "Cortes en general";
+        const avatarSrc = sanitizeUrl(barber.photo_url, defaultAvatar, { allowDataImage: true });
 
         item.innerHTML = `
           <div class="barber-profile-row">
-            <img class="barber-avatar" src="${barber.photo_url || defaultAvatar}" alt="${barber.name}">
+            <img class="barber-avatar" src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(barber.name)}">
             <div class="barber-info">
-              <span class="barber-name">${barber.name}</span>
-              <span class="service-meta">${specialtiesList}</span>
+              <span class="barber-name">${escapeHtml(barber.name)}</span>
+              <span class="service-meta">${escapeHtml(specialtiesList)}</span>
             </div>
           </div>
         `;
 
         item.addEventListener("click", () => {
-          document.querySelectorAll(".barber-item").forEach(i => i.classList.remove("selected"));
+          document.querySelectorAll(".barber-item").forEach((i) => i.classList.remove("selected"));
           item.classList.add("selected");
           bookingState.barberId = barber.id;
           bookingState.barberName = barber.name;
-          
+          bookingState.selectedTime = "";
+          document.getElementById("btn-to-step4").setAttribute("disabled", "true");
           document.getElementById("btn-to-step3").removeAttribute("disabled");
         });
 
@@ -381,18 +473,16 @@ document.addEventListener("DOMContentLoaded", () => {
   function buildDateSelector() {
     dateScrollContainer.innerHTML = "";
     const daysName = ["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"];
-    
-    // Generar próximos 7 días
+
     for (let i = 0; i < 7; i++) {
       const date = new Date();
       date.setDate(date.getDate() + i);
 
-      // Opcional: Saltar domingos
-      if (date.getDay() === 0) continue;
+      if (scheduleConfig.closedDays.includes(date.getDay())) continue;
 
       const dayName = daysName[date.getDay()];
       const dayNum = date.getDate();
-      const dateStr = date.toISOString().split("T")[0]; // YYYY-MM-DD
+      const dateStr = getLocalDateStr(date);
 
       const bubble = document.createElement("div");
       bubble.className = "date-bubble";
@@ -406,83 +496,136 @@ document.addEventListener("DOMContentLoaded", () => {
       `;
 
       bubble.addEventListener("click", () => {
-        document.querySelectorAll(".date-bubble").forEach(b => b.classList.remove("selected"));
+        document.querySelectorAll(".date-bubble").forEach((b) => b.classList.remove("selected"));
         bubble.classList.add("selected");
         bookingState.selectedDate = dateStr;
-        bookingState.selectedTime = ""; // Resetear hora anterior
+        bookingState.selectedTime = "";
+        const customInput = document.getElementById("booking-custom-date");
+        if (customInput) customInput.value = dateStr;
         document.getElementById("btn-to-step4").setAttribute("disabled", "true");
         loadAvailableTimes();
       });
 
       dateScrollContainer.appendChild(bubble);
     }
-    
-    // Configurar input de fecha nativo
+
     const customDateInput = document.getElementById("booking-custom-date");
     if (customDateInput) {
-      // Set min date to today
-      const today = new Date().toISOString().split("T")[0];
+      const today = getLocalDateStr();
       customDateInput.min = today;
       customDateInput.value = bookingState.selectedDate || "";
-      
-      customDateInput.addEventListener("change", (e) => {
-        const selectedDate = e.target.value;
-        if (!selectedDate) return;
-        
-        // Quitar selección de las burbujas horizontales
-        document.querySelectorAll(".date-bubble").forEach(b => b.classList.remove("selected"));
-        
-        bookingState.selectedDate = selectedDate;
-        bookingState.selectedTime = "";
-        document.getElementById("btn-to-step4").setAttribute("disabled", "true");
-        loadAvailableTimes();
-      });
+
+      if (!isCustomDateListenerBound) {
+        isCustomDateListenerBound = true;
+        customDateInput.addEventListener("change", (e) => {
+          const selectedDate = e.target.value;
+          if (!selectedDate) return;
+
+          document.querySelectorAll(".date-bubble").forEach((b) => {
+            b.classList.toggle("selected", b.dataset.date === selectedDate);
+          });
+
+          bookingState.selectedDate = selectedDate;
+          bookingState.selectedTime = "";
+          document.getElementById("btn-to-step4").setAttribute("disabled", "true");
+          loadAvailableTimes();
+        });
+      }
     }
+  }
+
+  async function fetchBusyIntervals(barberId, dateStr) {
+    // Usar función RPC segura para no exponer datos de clientes en el cliente público
+    if (typeof supabase.rpc === "function") {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc("get_busy_slots", {
+        p_barber_id: barberId,
+        p_date: dateStr
+      });
+
+      if (!rpcErr && Array.isArray(rpcData)) {
+        return rpcData.map((row) => {
+          const start = timeToMinutes(row.appointment_time);
+          const duration = Number(row.duration_minutes) || 30;
+          return { start, end: start + duration };
+        });
+      }
+    }
+
+    // Fallback compatible si la RPC aún no existe en la instancia remota
+    const { data: appointments, error } = await supabase
+      .from("appointments")
+      .select("appointment_time, services ( duration_minutes )")
+      .eq("barber_id", barberId)
+      .eq("appointment_date", dateStr)
+      .neq("status", "cancelled");
+
+    if (error) throw error;
+
+    return (appointments || []).map((app) => {
+      const start = timeToMinutes(app.appointment_time);
+      const duration = app.services && app.services.duration_minutes
+        ? Number(app.services.duration_minutes)
+        : 30;
+      return { start, end: start + duration };
+    });
   }
 
   async function loadAvailableTimes() {
     if (!bookingState.barberId || !bookingState.selectedDate) return;
-    
+
+    const chosenDateObj = new Date(bookingState.selectedDate + "T00:00:00");
+    if (scheduleConfig.closedDays.includes(chosenDateObj.getDay())) {
+      timeGridContainer.innerHTML = "<p class='text-muted' style='grid-column:1/-1;'>La barbería permanece cerrada este día. Por favor elige otra fecha.</p>";
+      return;
+    }
+
     timeGridContainer.innerHTML = "<p class='text-muted'>Cargando horarios...</p>";
 
     try {
-      // 1. Obtener citas ocupadas para el barbero y fecha seleccionados
-      const { data: appointments, error } = await supabase
-        .from("appointments")
-        .select("appointment_time")
-        .eq("barber_id", bookingState.barberId)
-        .eq("appointment_date", bookingState.selectedDate)
-        .neq("status", "cancelled");
+      const busyIntervals = await fetchBusyIntervals(bookingState.barberId, bookingState.selectedDate);
 
-      if (error) throw error;
+      const startMin = timeToMinutes(scheduleConfig.start);
+      const endMin = timeToMinutes(scheduleConfig.end);
+      const stepMin = scheduleConfig.interval || 30;
+      const serviceDur = bookingState.serviceDuration || 30;
 
-      // Crear lista de horas ocupadas (formato HH:MM)
-      const busyTimes = appointments.map(app => {
-        // El formato de time en PG suele ser HH:MM:SS
-        return app.appointment_time.slice(0, 5); 
-      });
+      const todayStr = getLocalDateStr();
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const isToday = bookingState.selectedDate === todayStr;
 
-      // 2. Definir horarios disponibles (de 9:00 AM a 6:00 PM cada 30 minutos)
-      const slots = [
-        "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", 
-        "12:00", "12:30", "13:00", "13:30", "14:00", "14:30", 
-        "15:00", "15:30", "16:00", "16:30", "17:00", "17:30"
-      ];
+      const slots = [];
+      for (let m = startMin; m + serviceDur <= endMin; m += stepMin) {
+        slots.push(m);
+      }
 
       timeGridContainer.innerHTML = "";
+      if (slots.length === 0) {
+        timeGridContainer.innerHTML = "<p class='text-muted' style='grid-column:1/-1;'>No hay horarios configurados para este servicio.</p>";
+        return;
+      }
 
-      slots.forEach(slot => {
-        const isBusy = busyTimes.includes(slot);
+      slots.forEach((slotStart) => {
+        const slotEnd = slotStart + serviceDur;
+        const slotStr = minutesToTime(slotStart);
+        const overlapsExisting = busyIntervals.some(
+          (busy) => slotStart < busy.end && slotEnd > busy.start
+        );
+        const isPastToday = isToday && slotStart <= nowMinutes;
+        const isUnavailable = overlapsExisting || isPastToday;
+
         const bubble = document.createElement("div");
-        bubble.className = `time-bubble ${isBusy ? 'disabled' : ''}`;
-        bubble.innerText = slot;
+        bubble.className = `time-bubble ${isUnavailable ? "disabled" : ""}`;
+        if (!isUnavailable && bookingState.selectedTime === slotStr) {
+          bubble.classList.add("selected");
+        }
+        bubble.textContent = slotStr;
 
-        if (!isBusy) {
+        if (!isUnavailable) {
           bubble.addEventListener("click", () => {
-            document.querySelectorAll(".time-bubble").forEach(tb => tb.classList.remove("selected"));
+            document.querySelectorAll(".time-bubble").forEach((tb) => tb.classList.remove("selected"));
             bubble.classList.add("selected");
-            bookingState.selectedTime = slot;
-            
+            bookingState.selectedTime = slotStr;
             document.getElementById("btn-to-step4").removeAttribute("disabled");
           });
         }
@@ -499,7 +642,6 @@ document.addEventListener("DOMContentLoaded", () => {
   function goToStep(stepIndex) {
     if (stepIndex < 0 || stepIndex >= steps.length) return;
 
-    // Desactivar pane e indicator anterior
     const prevStep = steps[currentStepIndex];
     document.getElementById(prevStep.pane).classList.remove("active");
     document.getElementById(prevStep.indicator).classList.remove("active");
@@ -509,13 +651,11 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById(steps[stepIndex].indicator).classList.remove("completed");
     }
 
-    // Activar nuevo paso
     currentStepIndex = stepIndex;
     const newStep = steps[currentStepIndex];
     document.getElementById(newStep.pane).classList.add("active");
     document.getElementById(newStep.indicator).classList.add("active");
 
-    // Lógicas específicas de pasos
     if (newStep.pane === "pane-service") {
       loadServices();
     } else if (newStep.pane === "pane-barber") {
@@ -528,19 +668,18 @@ document.addEventListener("DOMContentLoaded", () => {
         timeGridContainer.innerHTML = "<p class='text-muted'>Por favor selecciona una fecha arriba.</p>";
       }
     } else if (newStep.pane === "pane-details") {
-      // Mostrar resumen en el formulario
       const rawDate = new Date(bookingState.selectedDate + "T00:00:00");
-      const formattedDate = rawDate.toLocaleDateString("es-ES", { weekday: 'long', day: 'numeric', month: 'long' });
-      
+      const formattedDate = rawDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+
       summaryDetails.innerHTML = `
         <div class="card" style="margin-bottom:0px;">
-          <h4 style="color:var(--primary); margin-bottom:8px;">${bookingState.serviceName}</h4>
-          <p class="service-meta" style="margin-bottom:6px;"><strong style="color:#fff">Barbero:</strong> ${bookingState.barberName}</p>
-          <p class="service-meta" style="margin-bottom:6px;"><strong style="color:#fff">Fecha:</strong> ${formattedDate}</p>
-          <p class="service-meta"><strong style="color:#fff">Hora:</strong> ${bookingState.selectedTime} hs</p>
+          <h4 style="color:var(--primary); margin-bottom:8px;">${escapeHtml(bookingState.serviceName)}</h4>
+          <p class="service-meta" style="margin-bottom:6px;"><strong style="color:#fff">Barbero:</strong> ${escapeHtml(bookingState.barberName)}</p>
+          <p class="service-meta" style="margin-bottom:6px;"><strong style="color:#fff">Fecha:</strong> ${escapeHtml(formattedDate)}</p>
+          <p class="service-meta"><strong style="color:#fff">Hora:</strong> ${escapeHtml(bookingState.selectedTime)} hs (${bookingState.serviceDuration} min)</p>
           <div style="border-top:1px solid rgba(255,255,255,0.05); margin-top:12px; padding-top:12px; display:flex; justify-content:space-between;">
             <strong>Total a Pagar:</strong>
-            <strong style="color:var(--primary); font-size:1.1rem;">$${Number(bookingState.servicePrice).toLocaleString('es-CO')}</strong>
+            <strong style="color:var(--primary); font-size:1.1rem;">$${formatPrice(bookingState.servicePrice)}</strong>
           </div>
         </div>
       `;
@@ -551,13 +690,13 @@ document.addEventListener("DOMContentLoaded", () => {
     bookingState.serviceId = null;
     bookingState.serviceName = "";
     bookingState.servicePrice = 0;
+    bookingState.serviceDuration = 30;
     bookingState.barberId = null;
     bookingState.barberName = "";
     bookingState.selectedDate = "";
     bookingState.selectedTime = "";
 
-    // Limpiar clases de pasos
-    steps.forEach(step => {
+    steps.forEach((step) => {
       document.getElementById(step.pane).classList.remove("active");
       document.getElementById(step.indicator).classList.remove("active", "completed");
     });
@@ -566,13 +705,12 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("btn-to-step2").setAttribute("disabled", "true");
     document.getElementById("btn-to-step3").setAttribute("disabled", "true");
     document.getElementById("btn-to-step4").setAttribute("disabled", "true");
-    
+
     if (formClient) formClient.reset();
 
     goToStep(0);
   }
 
-  // Asignar listeners a botones de siguiente/atrás
   document.getElementById("btn-to-step2").addEventListener("click", () => goToStep(1));
   document.getElementById("btn-back-to-step1").addEventListener("click", () => goToStep(0));
 
@@ -582,22 +720,18 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("btn-to-step4").addEventListener("click", () => goToStep(3));
   document.getElementById("btn-back-to-step3").addEventListener("click", () => goToStep(2));
 
-  // Botón "Reservar de Nuevo" en la pantalla final de éxito
   document.getElementById("btn-reset-booking").addEventListener("click", () => {
     resetBookingWizard();
   });
 
-  // Permitir volver a pasos anteriores haciendo clic en el indicador superior
   steps.forEach((step, index) => {
     const indicator = document.getElementById(step.indicator);
     if (indicator) {
       indicator.addEventListener("click", () => {
-        // Solo permitir ir a pasos anteriores o al paso actual
         if (index < currentStepIndex || indicator.classList.contains("completed")) {
           goToStep(index);
         }
       });
-      // Añadir estilo pointer para indicar que es clicable
       indicator.style.cursor = "pointer";
     }
   });
@@ -608,15 +742,25 @@ document.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
 
       const btnSubmit = formClient.querySelector("button[type='submit']");
-      const originalText = btnSubmit.innerText;
+      const originalHtml = btnSubmit.innerHTML;
       btnSubmit.setAttribute("disabled", "true");
-      btnSubmit.innerText = "Registrando turno...";
+      btnSubmit.textContent = "Registrando turno...";
 
       const name = document.getElementById("client-name").value.trim();
       const phone = document.getElementById("client-phone").value.trim();
       const email = document.getElementById("client-email").value.trim() || null;
 
       try {
+        // Revalidar disponibilidad justo antes de insertar para evitar solapamientos
+        const latestBusy = await fetchBusyIntervals(bookingState.barberId, bookingState.selectedDate);
+        const slotStart = timeToMinutes(bookingState.selectedTime);
+        const slotEnd = slotStart + (bookingState.serviceDuration || 30);
+        if (latestBusy.some((b) => slotStart < b.end && slotEnd > b.start)) {
+          await showAlert("Ese horario acaba de ser reservado por otra persona. Por favor elige otra hora.", "Horario No Disponible", "alert-triangle");
+          goToStep(2);
+          return;
+        }
+
         const { data, error } = await supabase
           .from("appointments")
           .insert([
@@ -627,17 +771,23 @@ document.addEventListener("DOMContentLoaded", () => {
               barber_id: bookingState.barberId,
               service_id: bookingState.serviceId,
               appointment_date: bookingState.selectedDate,
-              appointment_time: bookingState.selectedTime + ":00", // Añadir segundos para formato TIME
+              appointment_time: bookingState.selectedTime + ":00",
               status: "pending"
             }
           ])
           .select();
 
-        if (error) throw error;
+        if (error) {
+          if (error.code === "23505" || (error.message && error.message.toLowerCase().includes("duplicate"))) {
+            await showAlert("Ese horario acaba de ser ocupado. Por favor elige otro horario.", "Horario Ocupado", "alert-triangle");
+            goToStep(2);
+            return;
+          }
+          throw error;
+        }
 
-        // Renderizar pantalla de confirmación final exitosa (Paso 5)
         const rawDate = new Date(bookingState.selectedDate + "T00:00:00");
-        const formattedDate = rawDate.toLocaleDateString("es-ES", { weekday: 'long', day: 'numeric', month: 'long' });
+        const formattedDate = rawDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
 
         confirmationDetails.innerHTML = `
           <div class="card-glass" style="border-color:var(--warning); text-align:center;">
@@ -647,17 +797,16 @@ document.addEventListener("DOMContentLoaded", () => {
             <h3 style="color:var(--warning); margin-bottom:8px;">¡Turno Solicitado!</h3>
             <p class="service-meta" style="margin-bottom:16px;">Tu cita ha sido registrada. El barbero te confirmará si se acepta la reserva.</p>
             <div style="text-align:left; border-top:1px solid rgba(255,255,255,0.05); padding-top:16px; display:flex; flex-direction:column; gap:8px;">
-              <p class="service-meta"><strong style="color:#fff">Cliente:</strong> ${name}</p>
-              <p class="service-meta"><strong style="color:#fff">Servicio:</strong> ${bookingState.serviceName}</p>
-              <p class="service-meta"><strong style="color:#fff">Barbero:</strong> ${bookingState.barberName}</p>
-              <p class="service-meta"><strong style="color:#fff">Fecha:</strong> ${formattedDate}</p>
-              <p class="service-meta"><strong style="color:#fff">Hora:</strong> ${bookingState.selectedTime} hs</p>
+              <p class="service-meta"><strong style="color:#fff">Cliente:</strong> ${escapeHtml(name)}</p>
+              <p class="service-meta"><strong style="color:#fff">Servicio:</strong> ${escapeHtml(bookingState.serviceName)}</p>
+              <p class="service-meta"><strong style="color:#fff">Barbero:</strong> ${escapeHtml(bookingState.barberName)}</p>
+              <p class="service-meta"><strong style="color:#fff">Fecha:</strong> ${escapeHtml(formattedDate)}</p>
+              <p class="service-meta"><strong style="color:#fff">Hora:</strong> ${escapeHtml(bookingState.selectedTime)} hs</p>
               <p class="service-meta"><strong style="color:#fff">Estado:</strong> <span class="appointment-status-tag status-pending">Por Confirmar</span></p>
             </div>
           </div>
         `;
-        
-        // Configurar botón de confirmación de WhatsApp
+
         const btnWa = document.getElementById("btn-whatsapp-confirm");
         if (btnWa && window.shopWhatsappNumber && window.shopWhatsappNumber.trim() !== "") {
           const cleanPhone = window.shopWhatsappNumber.replace(/\D/g, "");
@@ -680,16 +829,14 @@ Por favor confirmen mi turno. ¡Muchas gracias!`;
           btnWa.style.display = "none";
         }
 
-        // Re-iniciar iconos en el contenido inyectado
-        lucide.createIcons();
-        
-        goToStep(4); // Ir al paso 5 (índice 4)
+        if (window.lucide) window.lucide.createIcons();
+        goToStep(4);
       } catch (err) {
         console.error("Error insertando reserva:", err.message);
         await showAlert("Ocurrió un error al agendar tu cita: " + err.message, "Error al Agendar", "alert-triangle");
       } finally {
         btnSubmit.removeAttribute("disabled");
-        btnSubmit.innerText = originalText;
+        btnSubmit.innerHTML = originalHtml;
       }
     });
   }
@@ -705,14 +852,14 @@ Por favor confirmen mi turno. ¡Muchas gracias!`;
 
   function initLightboxEvents() {
     if (!lightbox) return;
-    lightboxClose.addEventListener("click", () => lightbox.style.display = "none");
-    
+    lightboxClose.addEventListener("click", () => { lightbox.style.display = "none"; });
+
     lightboxPrev.addEventListener("click", () => {
       if (galleryImages.length === 0) return;
       currentLightboxIndex = (currentLightboxIndex - 1 + galleryImages.length) % galleryImages.length;
       lightboxImg.src = galleryImages[currentLightboxIndex].src;
     });
-    
+
     lightboxNext.addEventListener("click", () => {
       if (galleryImages.length === 0) return;
       currentLightboxIndex = (currentLightboxIndex + 1) % galleryImages.length;
@@ -720,38 +867,35 @@ Por favor confirmen mi turno. ¡Muchas gracias!`;
     });
   }
 
-  window.refreshGalleryLightbox = function() {
+  window.refreshGalleryLightbox = function () {
     if (!lightbox) return;
     const container = document.getElementById("dyn-gallery-container");
     if (!container) return;
-    
+
     galleryImages = Array.from(container.querySelectorAll("img"));
     galleryImages.forEach((img, index) => {
       img.style.cursor = "pointer";
-      
-      // Reemplazar nodo para eliminar eventos viejos si existieran
       const newImg = img.cloneNode(true);
       img.parentNode.replaceChild(newImg, img);
-      
+
       newImg.addEventListener("click", () => {
         currentLightboxIndex = index;
         lightboxImg.src = galleryImages[currentLightboxIndex].src;
         lightbox.style.display = "flex";
       });
     });
-    
-    // Actualizar referencia
+
     galleryImages = Array.from(container.querySelectorAll("img"));
   };
 
   initLightboxEvents();
-  // Llamada inicial por si hay imágenes precargadas
   window.refreshGalleryLightbox();
 
   // --- Inicialización de la Aplicación con cargador de pantalla (loader) ---
   async function initApp() {
     try {
-      const promises = [loadHomeSettings(), loadTeam()];
+      await loadHomeSettings();
+      const promises = [loadTeam()];
       if (window.location.hash === "#booking") {
         promises.push(loadServices());
       }
@@ -766,5 +910,4 @@ Por favor confirmen mi turno. ¡Muchas gracias!`;
   }
 
   initApp();
-
 });

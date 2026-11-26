@@ -27,6 +27,13 @@
   
   <!-- Supabase JS Client SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    window.SITE_BASEURL = "{{ '' | relative_url }}";
+  </script>
+  <!-- Emulador local de Supabase (solo se activa en localhost/127.0.0.1) -->
+  <script src="{{ '/assets/js/supabase-mock.js' | relative_url }}"></script>
+  <!-- Utilidades compartidas (XSS, fechas locales, horarios) -->
+  <script src="{{ '/assets/js/app-utils.js' | relative_url }}"></script>
   
   <!-- Lucide Icons for premium modern look -->
   <script src="https://unpkg.com/lucide@latest"></script>

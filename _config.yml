@@ -1,8 +1,8 @@
 title: Barbería Elegance
 email: contacto@barberiaelegance.com
 description: Reserva tu turno de forma rápida y sencilla con los mejores barberos.
-baseurl: "/losangelesbarber"
-url: "https://losangelesbarberco.github.io"
+baseurl: "/shopbarber"
+url: "https://mayc1030.github.io"
 primary_color: "#FFD700"
 
 markdown: kramdown
@@ -12,3 +12,4 @@ exclude:
   - supabase_schema.sql
   - node_modules
   - README.md
+  - serve-local.js
